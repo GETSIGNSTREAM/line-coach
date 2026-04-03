@@ -2,80 +2,112 @@
 
 import { useState, useEffect } from 'react';
 
+// ── WILDBIRD Brand Colors ───────────────────────────────
+
+const BRAND = {
+  gold: '#D4A574',
+  charcoal: '#2B2B2B',
+  charcoalLight: '#363636',
+  charcoalDark: '#1E1E1E',
+  bone: '#F5F1E8',
+  white: '#FFFFFF',
+  cream: '#E8DCC8',
+  terracotta: '#C8654A',
+  blue: '#4A7C8C',
+  red: '#D64545',
+  green: '#6FCF97',
+};
+
 // ── Styles ──────────────────────────────────────────────
 
 const styles = {
   container: {
     minHeight: '100vh',
-    background: '#1a1a2e',
-    color: '#eee',
+    background: BRAND.charcoal,
+    color: BRAND.bone,
     padding: '24px',
     boxSizing: 'border-box',
+    fontFamily: "'Open Sans', 'Helvetica Neue', sans-serif",
   },
   header: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: '24px',
+    borderBottom: `2px solid ${BRAND.gold}`,
+    paddingBottom: '16px',
   },
-  title: { fontSize: '1.5rem', fontWeight: 700, color: '#e94560' },
-  subtitle: { fontSize: '0.9rem', color: '#aaa' },
+  title: {
+    fontSize: '1.5rem',
+    fontWeight: 700,
+    color: BRAND.gold,
+    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
+    letterSpacing: '3px',
+    textTransform: 'uppercase',
+  },
+  subtitle: { fontSize: '0.9rem', color: BRAND.cream },
   loginBox: {
     maxWidth: '400px',
     margin: '100px auto',
-    background: '#16213e',
+    background: BRAND.charcoalDark,
     padding: '32px',
     borderRadius: '12px',
+    border: `1px solid ${BRAND.gold}30`,
   },
   input: {
     width: '100%',
     padding: '10px 12px',
-    borderRadius: '6px',
-    border: '1px solid #333',
-    background: '#0f3460',
-    color: '#eee',
+    borderRadius: '8px',
+    border: `1px solid ${BRAND.charcoalLight}`,
+    background: BRAND.charcoalLight,
+    color: BRAND.bone,
     fontSize: '1rem',
     boxSizing: 'border-box',
     marginBottom: '12px',
+    fontFamily: "'Open Sans', sans-serif",
   },
   textarea: {
     width: '100%',
     padding: '10px 12px',
-    borderRadius: '6px',
-    border: '1px solid #333',
-    background: '#0f3460',
-    color: '#eee',
+    borderRadius: '8px',
+    border: `1px solid ${BRAND.charcoalLight}`,
+    background: BRAND.charcoalLight,
+    color: BRAND.bone,
     fontSize: '0.9rem',
     boxSizing: 'border-box',
-    fontFamily: 'monospace',
+    fontFamily: "'Open Sans', monospace",
     minHeight: '120px',
     marginBottom: '12px',
     resize: 'vertical',
   },
   btn: {
-    background: '#e94560',
-    color: '#fff',
+    background: BRAND.gold,
+    color: BRAND.charcoal,
     border: 'none',
     padding: '10px 24px',
-    borderRadius: '6px',
+    borderRadius: '8px',
     cursor: 'pointer',
     fontSize: '1rem',
-    fontWeight: 600,
+    fontWeight: 700,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '1px',
+    textTransform: 'uppercase',
   },
   btnSecondary: {
-    background: '#0f3460',
-    color: '#eee',
-    border: '1px solid #333',
+    background: BRAND.charcoalLight,
+    color: BRAND.bone,
+    border: `1px solid ${BRAND.cream}30`,
     padding: '8px 16px',
-    borderRadius: '6px',
+    borderRadius: '8px',
     cursor: 'pointer',
     fontSize: '0.9rem',
+    fontFamily: "'Open Sans', sans-serif",
   },
   tabs: {
     display: 'flex',
     gap: '4px',
     marginBottom: '24px',
-    borderBottom: '2px solid #333',
+    borderBottom: `2px solid ${BRAND.charcoalLight}`,
     paddingBottom: '4px',
   },
   tab: {
@@ -86,9 +118,12 @@ const styles = {
     fontWeight: 600,
     border: 'none',
     transition: 'background 0.2s',
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '1px',
+    textTransform: 'uppercase',
   },
   panel: {
-    background: '#16213e',
+    background: BRAND.charcoalDark,
     borderRadius: '8px',
     padding: '20px',
   },
@@ -99,14 +134,17 @@ const styles = {
   th: {
     textAlign: 'left',
     padding: '8px 12px',
-    borderBottom: '1px solid #333',
-    color: '#aaa',
+    borderBottom: `1px solid ${BRAND.charcoalLight}`,
+    color: BRAND.cream,
     fontSize: '0.85rem',
     fontWeight: 600,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '1px',
+    textTransform: 'uppercase',
   },
   td: {
     padding: '8px 12px',
-    borderBottom: '1px solid #222',
+    borderBottom: `1px solid ${BRAND.charcoal}`,
     fontSize: '0.9rem',
   },
   saveBar: {
@@ -114,15 +152,15 @@ const styles = {
     bottom: 0,
     left: 0,
     right: 0,
-    background: '#16213e',
-    borderTop: '2px solid #e94560',
+    background: BRAND.charcoalDark,
+    borderTop: `2px solid ${BRAND.gold}`,
     padding: '12px 24px',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  deviceOnline: { color: '#4caf50', fontSize: '0.8rem' },
-  deviceOffline: { color: '#666', fontSize: '0.8rem' },
+  deviceOnline: { color: BRAND.green, fontSize: '0.8rem' },
+  deviceOffline: { color: `${BRAND.cream}60`, fontSize: '0.8rem' },
 };
 
 const TABS = ['Menu', 'Sides', 'Tips', 'Hold Times', 'Settings', 'Devices'];
@@ -138,17 +176,11 @@ export default function LineCoachAdmin({ storeId }) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
 
-  // ── Login ─────────────────────────────────────────────
-
   async function handleLogin(e) {
     e.preventDefault();
     try {
-      const res = await fetch('/api/line-coach/config?store=' + storeId);
-      // Simple password-based login: generate a JWT on the client side
-      // In production, this would call a login endpoint
-      if (password === process.env.NEXT_PUBLIC_ADMIN_PASSWORD || password) {
-        // For now, store the password as a makeshift token
-        // A real implementation would call a /login endpoint
+      await fetch('/api/line-coach/config?store=' + storeId);
+      if (password) {
         setToken(password);
         setLoginError('');
       }
@@ -156,8 +188,6 @@ export default function LineCoachAdmin({ storeId }) {
       setLoginError('Login failed');
     }
   }
-
-  // ── Fetch config & devices ────────────────────────────
 
   useEffect(() => {
     if (!token) return;
@@ -172,8 +202,6 @@ export default function LineCoachAdmin({ storeId }) {
       .then((data) => setDevices(data.devices || []))
       .catch(console.error);
   }, [token, storeId]);
-
-  // ── Save config ───────────────────────────────────────
 
   async function handleSave() {
     setSaving(true);
@@ -206,13 +234,13 @@ export default function LineCoachAdmin({ storeId }) {
     setDirty(true);
   }
 
-  // ── Login screen ──────────────────────────────────────
-
   if (!token) {
     return (
       <div style={styles.container}>
         <div style={styles.loginBox}>
-          <h2 style={{ color: '#e94560', marginTop: 0 }}>Line Coach Admin</h2>
+          <h2 style={{ color: BRAND.gold, marginTop: 0, fontFamily: "'Oswald', sans-serif", letterSpacing: '2px', textTransform: 'uppercase' }}>
+            Line Coach Admin
+          </h2>
           <form onSubmit={handleLogin}>
             <input
               type="password"
@@ -222,7 +250,7 @@ export default function LineCoachAdmin({ storeId }) {
               style={styles.input}
               autoFocus
             />
-            {loginError && <div style={{ color: '#e94560', marginBottom: '12px' }}>{loginError}</div>}
+            {loginError && <div style={{ color: BRAND.red, marginBottom: '12px' }}>{loginError}</div>}
             <button type="submit" style={styles.btn}>Log In</button>
           </form>
         </div>
@@ -233,12 +261,10 @@ export default function LineCoachAdmin({ storeId }) {
   if (!config) {
     return (
       <div style={styles.container}>
-        <div style={{ textAlign: 'center', padding: '60px', color: '#aaa' }}>Loading config...</div>
+        <div style={{ textAlign: 'center', padding: '60px', color: BRAND.cream }}>Loading config...</div>
       </div>
     );
   }
-
-  // ── Tab panels ────────────────────────────────────────
 
   function renderMenuTab() {
     const items = config.menu_items || [];
@@ -257,65 +283,34 @@ export default function LineCoachAdmin({ storeId }) {
             {items.map((item, i) => (
               <tr key={i}>
                 <td style={styles.td}>
-                  <input
-                    style={{ ...styles.input, marginBottom: 0 }}
-                    value={item.name}
-                    onChange={(e) => {
-                      const updated = [...items];
-                      updated[i] = { ...item, name: e.target.value };
-                      updateConfig('menu_items', updated);
-                    }}
-                  />
+                  <input style={{ ...styles.input, marginBottom: 0 }} value={item.name}
+                    onChange={(e) => { const u = [...items]; u[i] = { ...item, name: e.target.value }; updateConfig('menu_items', u); }} />
                 </td>
                 <td style={styles.td}>
-                  <select
-                    style={{ ...styles.input, marginBottom: 0 }}
-                    value={item.station}
-                    onChange={(e) => {
-                      const updated = [...items];
-                      updated[i] = { ...item, station: e.target.value };
-                      updateConfig('menu_items', updated);
-                    }}
-                  >
+                  <select style={{ ...styles.input, marginBottom: 0 }} value={item.station}
+                    onChange={(e) => { const u = [...items]; u[i] = { ...item, station: e.target.value }; updateConfig('menu_items', u); }}>
+                    <option value="oven">Oven</option>
                     <option value="grill">Grill</option>
                     <option value="fryer">Fryer</option>
+                    <option value="line">Line</option>
                     <option value="cold">Cold</option>
                     <option value="hot_hold">Hot Hold</option>
+                    <option value="grab">Grab</option>
                   </select>
                 </td>
                 <td style={styles.td}>
-                  <input
-                    type="number"
-                    style={{ ...styles.input, marginBottom: 0, width: '80px' }}
-                    value={item.cook_time}
-                    onChange={(e) => {
-                      const updated = [...items];
-                      updated[i] = { ...item, cook_time: parseInt(e.target.value) || 0 };
-                      updateConfig('menu_items', updated);
-                    }}
-                  />
+                  <input type="number" style={{ ...styles.input, marginBottom: 0, width: '80px' }} value={item.cook_time}
+                    onChange={(e) => { const u = [...items]; u[i] = { ...item, cook_time: parseInt(e.target.value) || 0 }; updateConfig('menu_items', u); }} />
                 </td>
                 <td style={styles.td}>
-                  <button
-                    style={styles.btnSecondary}
-                    onClick={() => {
-                      const updated = items.filter((_, idx) => idx !== i);
-                      updateConfig('menu_items', updated);
-                    }}
-                  >
-                    Remove
-                  </button>
+                  <button style={styles.btnSecondary} onClick={() => { updateConfig('menu_items', items.filter((_, idx) => idx !== i)); }}>Remove</button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        <button
-          style={{ ...styles.btnSecondary, marginTop: '12px' }}
-          onClick={() => {
-            updateConfig('menu_items', [...items, { name: '', station: 'grill', cook_time: 5 }]);
-          }}
-        >
+        <button style={{ ...styles.btnSecondary, marginTop: '12px' }}
+          onClick={() => { updateConfig('menu_items', [...items, { name: '', station: 'line', cook_time: 4 }]); }}>
           + Add Item
         </button>
       </div>
@@ -340,80 +335,36 @@ export default function LineCoachAdmin({ storeId }) {
             {items.map((item, i) => (
               <tr key={i}>
                 <td style={styles.td}>
-                  <input
-                    style={{ ...styles.input, marginBottom: 0 }}
-                    value={item.name}
-                    onChange={(e) => {
-                      const updated = [...items];
-                      updated[i] = { ...item, name: e.target.value };
-                      updateConfig('sides', updated);
-                    }}
-                  />
+                  <input style={{ ...styles.input, marginBottom: 0 }} value={item.name}
+                    onChange={(e) => { const u = [...items]; u[i] = { ...item, name: e.target.value }; updateConfig('sides', u); }} />
                 </td>
                 <td style={styles.td}>
-                  <select
-                    style={{ ...styles.input, marginBottom: 0 }}
-                    value={item.station}
-                    onChange={(e) => {
-                      const updated = [...items];
-                      updated[i] = { ...item, station: e.target.value };
-                      updateConfig('sides', updated);
-                    }}
-                  >
+                  <select style={{ ...styles.input, marginBottom: 0 }} value={item.station}
+                    onChange={(e) => { const u = [...items]; u[i] = { ...item, station: e.target.value }; updateConfig('sides', u); }}>
+                    <option value="hot_hold">Hot Hold</option>
+                    <option value="cold">Cold</option>
                     <option value="fryer">Fryer</option>
                     <option value="grill">Grill</option>
-                    <option value="cold">Cold</option>
-                    <option value="hot_hold">Hot Hold</option>
+                    <option value="oven">Oven</option>
                   </select>
                 </td>
                 <td style={styles.td}>
-                  <input
-                    type="number"
-                    style={{ ...styles.input, marginBottom: 0, width: '80px' }}
-                    value={item.cook_time}
-                    onChange={(e) => {
-                      const updated = [...items];
-                      updated[i] = { ...item, cook_time: parseInt(e.target.value) || 0 };
-                      updateConfig('sides', updated);
-                    }}
-                  />
+                  <input type="number" style={{ ...styles.input, marginBottom: 0, width: '80px' }} value={item.cook_time}
+                    onChange={(e) => { const u = [...items]; u[i] = { ...item, cook_time: parseInt(e.target.value) || 0 }; updateConfig('sides', u); }} />
                 </td>
                 <td style={styles.td}>
-                  <input
-                    type="number"
-                    style={{ ...styles.input, marginBottom: 0, width: '80px' }}
-                    value={item.batch_size}
-                    onChange={(e) => {
-                      const updated = [...items];
-                      updated[i] = { ...item, batch_size: parseInt(e.target.value) || 1 };
-                      updateConfig('sides', updated);
-                    }}
-                  />
+                  <input type="number" style={{ ...styles.input, marginBottom: 0, width: '80px' }} value={item.batch_size}
+                    onChange={(e) => { const u = [...items]; u[i] = { ...item, batch_size: parseInt(e.target.value) || 1 }; updateConfig('sides', u); }} />
                 </td>
                 <td style={styles.td}>
-                  <button
-                    style={styles.btnSecondary}
-                    onClick={() => {
-                      const updated = items.filter((_, idx) => idx !== i);
-                      updateConfig('sides', updated);
-                    }}
-                  >
-                    Remove
-                  </button>
+                  <button style={styles.btnSecondary} onClick={() => { updateConfig('sides', items.filter((_, idx) => idx !== i)); }}>Remove</button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        <button
-          style={{ ...styles.btnSecondary, marginTop: '12px' }}
-          onClick={() => {
-            updateConfig('sides', [
-              ...items,
-              { name: '', station: 'fryer', cook_time: 4, batch_size: 4 },
-            ]);
-          }}
-        >
+        <button style={{ ...styles.btnSecondary, marginTop: '12px' }}
+          onClick={() => { updateConfig('sides', [...items, { name: '', station: 'hot_hold', cook_time: 0, batch_size: 4 }]); }}>
           + Add Side
         </button>
       </div>
@@ -424,19 +375,16 @@ export default function LineCoachAdmin({ storeId }) {
     const tips = config.quality_tips || [];
     return (
       <div style={styles.panel}>
-        <p style={{ color: '#aaa', marginTop: 0 }}>
+        <p style={{ color: BRAND.cream, marginTop: 0 }}>
           Quality tips are shown on the display during slow periods. One tip per line.
         </p>
         <textarea
           style={styles.textarea}
           value={tips.join('\n')}
           rows={tips.length + 2}
-          onChange={(e) => {
-            const updated = e.target.value.split('\n').filter((t) => t.trim());
-            updateConfig('quality_tips', updated);
-          }}
+          onChange={(e) => { updateConfig('quality_tips', e.target.value.split('\n').filter((t) => t.trim())); }}
         />
-        <div style={{ color: '#aaa', fontSize: '0.85rem' }}>{tips.length} tips configured</div>
+        <div style={{ color: BRAND.cream, fontSize: '0.85rem' }}>{tips.length} tips configured</div>
       </div>
     );
   }
@@ -445,23 +393,17 @@ export default function LineCoachAdmin({ storeId }) {
     const ht = config.hold_times || { fire_now: 5, staging: 15, on_deck: 30 };
     return (
       <div style={styles.panel}>
-        <p style={{ color: '#aaa', marginTop: 0 }}>
+        <p style={{ color: BRAND.cream, marginTop: 0 }}>
           Hold times define when orders move between lanes (in minutes before fire time).
         </p>
         {Object.entries(ht).map(([key, value]) => (
           <div key={key} style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <label style={{ width: '120px', fontWeight: 600, textTransform: 'capitalize' }}>
+            <label style={{ width: '120px', fontWeight: 600, textTransform: 'capitalize', fontFamily: "'Oswald', sans-serif" }}>
               {key.replace(/_/g, ' ')}:
             </label>
-            <input
-              type="number"
-              style={{ ...styles.input, marginBottom: 0, width: '100px' }}
-              value={value}
-              onChange={(e) => {
-                updateConfig('hold_times', { ...ht, [key]: parseInt(e.target.value) || 0 });
-              }}
-            />
-            <span style={{ color: '#aaa', fontSize: '0.85rem' }}>minutes</span>
+            <input type="number" style={{ ...styles.input, marginBottom: 0, width: '100px' }} value={value}
+              onChange={(e) => { updateConfig('hold_times', { ...ht, [key]: parseInt(e.target.value) || 0 }); }} />
+            <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>minutes</span>
           </div>
         ))}
       </div>
@@ -473,34 +415,18 @@ export default function LineCoachAdmin({ storeId }) {
     return (
       <div style={styles.panel}>
         <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <label style={{ width: '200px', fontWeight: 600 }}>Quality Coach Interval:</label>
-          <input
-            type="number"
-            style={{ ...styles.input, marginBottom: 0, width: '100px' }}
+          <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Quality Coach Interval:</label>
+          <input type="number" style={{ ...styles.input, marginBottom: 0, width: '100px' }}
             value={settings.quality_coach_interval || 30}
-            onChange={(e) => {
-              updateConfig('settings', {
-                ...settings,
-                quality_coach_interval: parseInt(e.target.value) || 30,
-              });
-            }}
-          />
-          <span style={{ color: '#aaa', fontSize: '0.85rem' }}>seconds between tips</span>
+            onChange={(e) => { updateConfig('settings', { ...settings, quality_coach_interval: parseInt(e.target.value) || 30 }); }} />
+          <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>seconds between tips</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <label style={{ width: '200px', fontWeight: 600 }}>Side Batch Threshold:</label>
-          <input
-            type="number"
-            style={{ ...styles.input, marginBottom: 0, width: '100px' }}
+          <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Side Batch Threshold:</label>
+          <input type="number" style={{ ...styles.input, marginBottom: 0, width: '100px' }}
             value={settings.side_batch_threshold || 3}
-            onChange={(e) => {
-              updateConfig('settings', {
-                ...settings,
-                side_batch_threshold: parseInt(e.target.value) || 3,
-              });
-            }}
-          />
-          <span style={{ color: '#aaa', fontSize: '0.85rem' }}>minimum to show batch alert</span>
+            onChange={(e) => { updateConfig('settings', { ...settings, side_batch_threshold: parseInt(e.target.value) || 3 }); }} />
+          <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>minimum to show batch alert</span>
         </div>
       </div>
     );
@@ -521,11 +447,7 @@ export default function LineCoachAdmin({ storeId }) {
           </thead>
           <tbody>
             {devices.length === 0 && (
-              <tr>
-                <td colSpan={5} style={{ ...styles.td, textAlign: 'center', color: '#666' }}>
-                  No devices registered
-                </td>
-              </tr>
+              <tr><td colSpan={5} style={{ ...styles.td, textAlign: 'center', color: `${BRAND.cream}60` }}>No devices registered</td></tr>
             )}
             {devices.map((device) => {
               const lastBeat = new Date(device.last_heartbeat);
@@ -536,9 +458,7 @@ export default function LineCoachAdmin({ storeId }) {
                   <td style={styles.td}>{device.device_name || '—'}</td>
                   <td style={styles.td}>{device.device_type}</td>
                   <td style={styles.td}>
-                    <span style={isOnline ? styles.deviceOnline : styles.deviceOffline}>
-                      {isOnline ? 'Online' : 'Offline'}
-                    </span>
+                    <span style={isOnline ? styles.deviceOnline : styles.deviceOffline}>{isOnline ? 'Online' : 'Offline'}</span>
                   </td>
                   <td style={styles.td}>{lastBeat.toLocaleString()}</td>
                 </tr>
@@ -546,70 +466,45 @@ export default function LineCoachAdmin({ storeId }) {
             })}
           </tbody>
         </table>
-        <button
-          style={{ ...styles.btnSecondary, marginTop: '12px' }}
-          onClick={() => {
-            fetch(`/api/line-coach/devices?store=${storeId}`)
-              .then((r) => r.json())
-              .then((data) => setDevices(data.devices || []))
-              .catch(console.error);
-          }}
-        >
+        <button style={{ ...styles.btnSecondary, marginTop: '12px' }}
+          onClick={() => { fetch(`/api/line-coach/devices?store=${storeId}`).then((r) => r.json()).then((data) => setDevices(data.devices || [])).catch(console.error); }}>
           Refresh
         </button>
       </div>
     );
   }
 
-  const tabRenderers = {
-    Menu: renderMenuTab,
-    Sides: renderSidesTab,
-    Tips: renderTipsTab,
-    'Hold Times': renderHoldTimesTab,
-    Settings: renderSettingsTab,
-    Devices: renderDevicesTab,
-  };
-
-  // ── Render ──────────────────────────────────────────
+  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Hold Times': renderHoldTimesTab, Settings: renderSettingsTab, Devices: renderDevicesTab };
 
   return (
     <div style={styles.container}>
       <div style={styles.header}>
         <div>
-          <div style={styles.title}>LINE COACH ADMIN</div>
+          <div style={styles.title}>Line Coach Admin</div>
           <div style={styles.subtitle}>Store: {storeId}</div>
         </div>
-        <a href={`/?store=${storeId}`} style={{ ...styles.btnSecondary, textDecoration: 'none' }}>
-          View Display
-        </a>
+        <a href={`/?store=${storeId}`} style={{ ...styles.btnSecondary, textDecoration: 'none' }}>View Display</a>
       </div>
 
-      {/* Tabs */}
       <div style={styles.tabs}>
         {TABS.map((tab) => (
-          <button
-            key={tab}
-            style={{
-              ...styles.tab,
-              background: activeTab === tab ? '#e94560' : '#16213e',
-              color: activeTab === tab ? '#fff' : '#aaa',
-            }}
-            onClick={() => setActiveTab(tab)}
-          >
+          <button key={tab} style={{
+            ...styles.tab,
+            background: activeTab === tab ? BRAND.gold : BRAND.charcoalDark,
+            color: activeTab === tab ? BRAND.charcoal : BRAND.cream,
+          }} onClick={() => setActiveTab(tab)}>
             {tab}
           </button>
         ))}
       </div>
 
-      {/* Active panel */}
       {tabRenderers[activeTab]?.()}
 
-      {/* Save bar */}
       {dirty && (
         <div style={styles.saveBar}>
-          <span style={{ color: '#f5a623' }}>Unsaved changes</span>
+          <span style={{ color: BRAND.gold }}>Unsaved changes</span>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            {saveMsg && <span style={{ color: saveMsg.startsWith('Error') ? '#e94560' : '#4caf50' }}>{saveMsg}</span>}
+            {saveMsg && <span style={{ color: saveMsg.startsWith('Error') ? BRAND.red : BRAND.green }}>{saveMsg}</span>}
             <button style={styles.btn} onClick={handleSave} disabled={saving}>
               {saving ? 'Saving...' : 'Save Changes'}
             </button>
