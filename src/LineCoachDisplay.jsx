@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
 // ── WILDBIRD Brand Colors ───────────────────────────────
 
@@ -15,187 +15,13 @@ const BRAND = {
   charcoalDark: '#1E1E1E',
   bone: '#F5F1E8',
   white: '#FFFFFF',
-  sage: '#A8B5A0',
+  cream: '#E8DCC8',
   terracotta: '#C8654A',
   blue: '#4A7C8C',
-  cream: '#E8DCC8',
   red: '#D64545',
   yellow: '#F2C94C',
   green: '#6FCF97',
-};
-
-// ── Styles ──────────────────────────────────────────────
-
-const styles = {
-  container: {
-    minHeight: '100vh',
-    background: BRAND.charcoal,
-    color: BRAND.bone,
-    padding: '16px',
-    boxSizing: 'border-box',
-  },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '10px 20px',
-    background: BRAND.charcoalDark,
-    borderRadius: '8px',
-    marginBottom: '16px',
-    borderBottom: `2px solid ${BRAND.gold}`,
-  },
-  title: {
-    fontSize: '1.6rem',
-    fontWeight: 700,
-    color: BRAND.gold,
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-    letterSpacing: '3px',
-    textTransform: 'uppercase',
-  },
-  clock: {
-    fontSize: '1.2rem',
-    color: BRAND.cream,
-    fontVariantNumeric: 'tabular-nums',
-    fontFamily: "'Open Sans', sans-serif",
-  },
-  lanesGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: '16px',
-    flex: 1,
-  },
-  lane: {
-    background: BRAND.charcoalDark,
-    borderRadius: '8px',
-    padding: '12px',
-    minHeight: '300px',
-  },
-  laneHeader: {
-    fontSize: '1.1rem',
-    fontWeight: 700,
-    padding: '10px 14px',
-    borderRadius: '6px',
-    marginBottom: '12px',
-    textAlign: 'center',
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-    letterSpacing: '2px',
-    textTransform: 'uppercase',
-  },
-  orderCard: {
-    background: BRAND.charcoalLight,
-    borderRadius: '6px',
-    padding: '10px 12px',
-    marginBottom: '8px',
-    cursor: 'pointer',
-    transition: 'transform 0.1s',
-  },
-  orderNumber: {
-    fontWeight: 700,
-    fontSize: '1.1rem',
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-    color: BRAND.bone,
-  },
-  orderAge: { fontSize: '0.8rem', color: BRAND.cream, marginLeft: '8px' },
-  itemList: {
-    margin: '6px 0 0 0',
-    padding: 0,
-    listStyle: 'none',
-    fontSize: '0.9rem',
-    fontFamily: "'Playfair Display', Georgia, serif",
-  },
-  rushBadge: {
-    background: BRAND.red,
-    color: BRAND.white,
-    padding: '2px 8px',
-    borderRadius: '4px',
-    fontSize: '0.75rem',
-    fontWeight: 700,
-    marginLeft: '8px',
-    fontFamily: "'Oswald', sans-serif",
-    letterSpacing: '1px',
-  },
-  sideBatch: {
-    background: BRAND.charcoalDark,
-    borderRadius: '8px',
-    padding: '12px',
-    marginTop: '16px',
-    borderLeft: `3px solid ${BRAND.gold}`,
-  },
-  sideBatchTitle: {
-    fontWeight: 700,
-    marginBottom: '8px',
-    color: BRAND.gold,
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-    letterSpacing: '2px',
-    textTransform: 'uppercase',
-  },
-  sidePill: {
-    display: 'inline-block',
-    background: BRAND.charcoalLight,
-    color: BRAND.bone,
-    padding: '4px 14px',
-    borderRadius: '16px',
-    margin: '4px',
-    fontSize: '0.85rem',
-    border: `1px solid ${BRAND.gold}40`,
-  },
-  qualityCoach: {
-    background: BRAND.charcoalDark,
-    border: `2px solid ${BRAND.gold}`,
-    borderRadius: '12px',
-    padding: '40px',
-    textAlign: 'center',
-    maxWidth: '700px',
-    margin: '80px auto',
-  },
-  qualityLabel: {
-    fontSize: '0.9rem',
-    color: BRAND.gold,
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: '3px',
-    marginBottom: '20px',
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-  },
-  qualityTip: {
-    fontSize: '1.5rem',
-    lineHeight: 1.6,
-    color: BRAND.bone,
-    fontFamily: "'Playfair Display', Georgia, serif",
-  },
-  bumpBtn: {
-    background: BRAND.gold,
-    color: BRAND.charcoal,
-    border: 'none',
-    padding: '6px 16px',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontSize: '0.85rem',
-    fontWeight: 700,
-    marginTop: '6px',
-    fontFamily: "'Oswald', sans-serif",
-    letterSpacing: '1px',
-    textTransform: 'uppercase',
-  },
-  stats: {
-    display: 'flex',
-    gap: '24px',
-    fontSize: '0.85rem',
-    color: BRAND.cream,
-    fontFamily: "'Open Sans', sans-serif",
-  },
-};
-
-const LANE_COLORS = {
-  'Fire Now': BRAND.terracotta,
-  'Staging': BRAND.yellow,
-  'On Deck': BRAND.blue,
-};
-
-const LANE_TEXT_COLORS = {
-  'Fire Now': BRAND.white,
-  'Staging': BRAND.charcoal,
-  'On Deck': BRAND.white,
+  sage: '#A8B5A0',
 };
 
 // ── Component ───────────────────────────────────────────
@@ -227,26 +53,16 @@ export default function LineCoachDisplay({ storeId }) {
       .catch(console.error);
   }, [storeId]);
 
-  useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
+  useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
   useEffect(() => {
     const client = supabaseRef.current;
     if (!client) return;
-
     const channel = client
       .channel('lc-orders-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'lc_orders', filter: `store_id=eq.${storeId}` },
-        () => fetchOrders()
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lc_orders', filter: `store_id=eq.${storeId}` }, () => fetchOrders())
       .subscribe();
-
-    return () => {
-      client.removeChannel(channel);
-    };
+    return () => { client.removeChannel(channel); };
   }, [storeId, fetchOrders]);
 
   useEffect(() => {
@@ -256,9 +72,7 @@ export default function LineCoachDisplay({ storeId }) {
 
   useEffect(() => {
     const tipInterval = (config?.settings?.quality_coach_interval || 30) * 1000;
-    const interval = setInterval(() => {
-      setQualityTipIndex((i) => i + 1);
-    }, tipInterval);
+    const interval = setInterval(() => setQualityTipIndex((i) => i + 1), tipInterval);
     return () => clearInterval(interval);
   }, [config]);
 
@@ -276,27 +90,14 @@ export default function LineCoachDisplay({ storeId }) {
     return () => clearInterval(interval);
   }, [storeId]);
 
-  // ── Lane classification ─────────────────────────────
+  // ── Data Processing ─────────────────────────────────
 
-  const holdTimes = config?.hold_times || { fire_now: 5, staging: 15, on_deck: 30 };
+  const menuItems = config?.menu_items || [];
+  const configSides = config?.sides || [];
+  const tips = config?.quality_tips || [];
+  const isSlowPeriod = orders.length === 0;
 
-  function classifyOrder(order) {
-    const ageMinutes = (now - new Date(order.fire_at)) / 60_000;
-    if (order.priority === 'rush' || ageMinutes >= 0) {
-      if (ageMinutes >= -holdTimes.fire_now) return 'Fire Now';
-    }
-    if (ageMinutes >= -holdTimes.staging) return 'Staging';
-    return 'On Deck';
-  }
-
-  const lanes = { 'Fire Now': [], 'Staging': [], 'On Deck': [] };
-  for (const order of orders) {
-    const lane = classifyOrder(order);
-    lanes[lane].push(order);
-  }
-
-  // ── Side batching ───────────────────────────────────
-
+  // Side Batching: aggregate sides across all active orders
   function getBatchedSides() {
     const sideCounts = {};
     for (const order of orders) {
@@ -305,140 +106,504 @@ export default function LineCoachDisplay({ storeId }) {
         sideCounts[name] = (sideCounts[name] || 0) + (side.quantity || 1);
       }
     }
-    const threshold = config?.settings?.side_batch_threshold || 3;
+    // Also count sides that appear as items
+    for (const order of orders) {
+      for (const item of order.items || []) {
+        const sideMatch = configSides.find((s) => s.name === item.name);
+        if (sideMatch) {
+          sideCounts[item.name] = (sideCounts[item.name] || 0) + (item.quantity || 1);
+        }
+      }
+    }
     return Object.entries(sideCounts)
-      .filter(([, count]) => count >= threshold)
       .sort((a, b) => b[1] - a[1]);
   }
 
-  // ── Bump handler ────────────────────────────────────
+  // Fire Sequencing: group items by cook time, longest first
+  function getFireSequence() {
+    const itemTimes = [];
+    for (const order of orders) {
+      for (const item of order.items || []) {
+        const menuMatch = menuItems.find((m) => m.name === item.name);
+        const cookTime = menuMatch?.cook_time || 0;
+        if (cookTime > 0) {
+          itemTimes.push({
+            name: item.name,
+            cookTime,
+            orderNum: order.order_number || '—',
+            quantity: item.quantity || 1,
+            station: menuMatch?.station || 'line',
+          });
+        }
+      }
+      for (const side of order.sides || []) {
+        const sideName = side.name || side;
+        const sideMatch = configSides.find((s) => s.name === sideName);
+        const cookTime = sideMatch?.cook_time || 0;
+        if (cookTime > 0) {
+          itemTimes.push({
+            name: sideName,
+            cookTime,
+            orderNum: order.order_number || '—',
+            quantity: side.quantity || 1,
+            station: sideMatch?.station || 'line',
+          });
+        }
+      }
+    }
+    // Sort longest cook time first
+    itemTimes.sort((a, b) => b.cookTime - a.cookTime);
+    return itemTimes;
+  }
 
-  async function handleBump(orderId) {
-    await fetch('/api/line-coach/bump', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId }),
-    });
-    setOrders((prev) => prev.filter((o) => o.id !== orderId));
+  // Prep Volume: count items by category/station
+  function getPrepVolume() {
+    const stationCounts = {};
+    const categoryCounts = {};
+    for (const order of orders) {
+      for (const item of order.items || []) {
+        const menuMatch = menuItems.find((m) => m.name === item.name);
+        const station = menuMatch?.station || 'line';
+        const category = menuMatch?.category || 'Other';
+        const qty = item.quantity || 1;
+        stationCounts[station] = (stationCounts[station] || 0) + qty;
+        categoryCounts[category] = (categoryCounts[category] || 0) + qty;
+      }
+    }
+    return { stationCounts, categoryCounts };
   }
 
   // ── Quality Coach mode ──────────────────────────────
 
-  const tips = config?.quality_tips || [];
-  const isSlowPeriod = orders.length === 0;
-
   if (isSlowPeriod && tips.length > 0) {
     const tip = tips[qualityTipIndex % tips.length];
     return (
-      <div style={styles.container}>
-        <div style={styles.header}>
-          <span style={styles.title}>WILDBIRD LINE COACH</span>
-          <span style={styles.clock}>{now.toLocaleTimeString()}</span>
-        </div>
-        <div style={styles.qualityCoach}>
-          <div style={styles.qualityLabel}>Quality Coach</div>
-          <div style={styles.qualityTip}>{tip}</div>
+      <div style={s.container}>
+        <Header now={now} orderCount={0} />
+        <div style={s.qualityCoach}>
+          <div style={s.qualityLabel}>QUALITY COACH</div>
+          <div style={s.qualityTip}>{tip}</div>
         </div>
       </div>
     );
   }
 
-  // ── Render ──────────────────────────────────────────
+  // ── Active Orders View ──────────────────────────────
 
   const batchedSides = getBatchedSides();
-
-  function formatAge(fireAt) {
-    const mins = Math.round((now - new Date(fireAt)) / 60_000);
-    if (mins <= 0) return 'just now';
-    return `${mins}m ago`;
-  }
+  const fireSequence = getFireSequence();
+  const { stationCounts, categoryCounts } = getPrepVolume();
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <span style={styles.title}>WILDBIRD LINE COACH</span>
-        <div style={styles.stats}>
-          <span>Active: {orders.length}</span>
-          <span>Fire Now: {lanes['Fire Now'].length}</span>
-        </div>
-        <span style={styles.clock}>{now.toLocaleTimeString()}</span>
-      </div>
+    <div style={s.container}>
+      <Header now={now} orderCount={orders.length} />
 
-      <div style={styles.lanesGrid}>
-        {Object.entries(lanes).map(([laneName, laneOrders]) => (
-          <div key={laneName} style={styles.lane}>
-            <div style={{
-              ...styles.laneHeader,
-              background: LANE_COLORS[laneName],
-              color: LANE_TEXT_COLORS[laneName],
-            }}>
-              {laneName} ({laneOrders.length})
+      <div style={s.mainGrid}>
+        {/* Left Column: Fire Sequence + Prep Volume */}
+        <div style={s.leftCol}>
+          {/* Fire Sequence */}
+          <div style={s.panel}>
+            <div style={s.panelHeader}>
+              <span style={s.panelIcon}>&#9650;</span>
+              FIRE ORDER
             </div>
-            {laneOrders.map((order) => (
-              <div key={order.id} style={{
-                ...styles.orderCard,
-                borderLeft: order.priority === 'rush'
-                  ? `4px solid ${BRAND.red}`
-                  : `4px solid ${BRAND.gold}40`,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div>
-                    <span style={styles.orderNumber}>#{order.order_number || '—'}</span>
-                    <span style={styles.orderAge}>{formatAge(order.fire_at)}</span>
-                    {order.priority === 'rush' && <span style={styles.rushBadge}>RUSH</span>}
+            <div style={s.panelSubtext}>Start longest cook times first</div>
+            {fireSequence.length === 0 && (
+              <div style={s.emptyState}>No timed items</div>
+            )}
+            {fireSequence.slice(0, 8).map((item, i) => (
+              <div key={i} style={s.fireRow}>
+                <div style={s.fireIndex}>{i + 1}</div>
+                <div style={s.fireInfo}>
+                  <div style={s.fireName}>
+                    {item.quantity > 1 ? `${item.quantity}x ` : ''}{item.name}
                   </div>
-                  <button style={styles.bumpBtn} onClick={() => handleBump(order.id)}>
-                    BUMP
-                  </button>
+                  <div style={s.fireMeta}>
+                    #{item.orderNum} &middot; {item.station}
+                  </div>
                 </div>
-                <ul style={styles.itemList}>
-                  {(order.items || []).map((item, i) => (
-                    <li key={i} style={{ padding: '2px 0', color: BRAND.bone }}>
-                      {item.quantity > 1 ? `${item.quantity}x ` : ''}{item.name}
-                      {item.modifiers?.length > 0 && (
-                        <span style={{ color: BRAND.cream, fontSize: '0.8rem' }}>
-                          {' '}({item.modifiers.join(', ')})
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                  {(order.sides || []).map((side, i) => (
-                    <li key={`s-${i}`} style={{ padding: '2px 0', color: BRAND.cream }}>
-                      + {typeof side === 'string' ? side : side.name}
-                    </li>
-                  ))}
-                </ul>
-                {order.notes && (
-                  <div style={{ fontSize: '0.8rem', color: BRAND.gold, marginTop: '4px' }}>
-                    Note: {order.notes}
-                  </div>
-                )}
+                <div style={{
+                  ...s.fireCookTime,
+                  color: item.cookTime >= 6 ? BRAND.terracotta : item.cookTime >= 4 ? BRAND.yellow : BRAND.green,
+                }}>
+                  {item.cookTime}m
+                </div>
               </div>
             ))}
-            {laneOrders.length === 0 && (
-              <div style={{
-                textAlign: 'center',
-                color: `${BRAND.cream}80`,
-                padding: '20px',
-                fontSize: '0.9rem',
-              }}>
-                No orders
-              </div>
-            )}
           </div>
-        ))}
-      </div>
 
-      {batchedSides.length > 0 && (
-        <div style={styles.sideBatch}>
-          <div style={styles.sideBatchTitle}>Batch Sides</div>
-          {batchedSides.map(([name, count]) => (
-            <span key={name} style={styles.sidePill}>
-              {name}: {count}
-            </span>
-          ))}
+          {/* Prep Volume */}
+          <div style={s.panel}>
+            <div style={s.panelHeader}>
+              <span style={s.panelIcon}>&#9632;</span>
+              PREP VOLUME
+            </div>
+            <div style={s.panelSubtext}>Current demand by station</div>
+            {Object.entries(stationCounts).length === 0 && (
+              <div style={s.emptyState}>No active orders</div>
+            )}
+            {Object.entries(stationCounts)
+              .sort((a, b) => b[1] - a[1])
+              .map(([station, count]) => (
+                <div key={station} style={s.prepRow}>
+                  <span style={s.prepStation}>{station.replace(/_/g, ' ')}</span>
+                  <div style={s.prepBarOuter}>
+                    <div style={{
+                      ...s.prepBarInner,
+                      width: `${Math.min(count / Math.max(...Object.values(stationCounts)) * 100, 100)}%`,
+                      background: count >= 8 ? BRAND.terracotta : count >= 4 ? BRAND.yellow : BRAND.gold,
+                    }} />
+                  </div>
+                  <span style={s.prepCount}>{count}</span>
+                </div>
+              ))}
+
+            {/* Category breakdown */}
+            <div style={{ ...s.panelSubtext, marginTop: '12px' }}>By category</div>
+            {Object.entries(categoryCounts)
+              .sort((a, b) => b[1] - a[1])
+              .map(([cat, count]) => (
+                <div key={cat} style={s.categoryRow}>
+                  <span style={s.categoryName}>{cat}</span>
+                  <span style={s.categoryCount}>{count}</span>
+                </div>
+              ))}
+          </div>
         </div>
-      )}
+
+        {/* Right Column: Side Batching */}
+        <div style={s.rightCol}>
+          <div style={s.panel}>
+            <div style={s.panelHeader}>
+              <span style={s.panelIcon}>&#9644;</span>
+              BATCH SIDES
+            </div>
+            <div style={s.panelSubtext}>Aggregate across all active orders</div>
+            {batchedSides.length === 0 && (
+              <div style={s.emptyState}>No sides to batch</div>
+            )}
+            {batchedSides.map(([name, count]) => {
+              const sideConfig = configSides.find((sc) => sc.name === name);
+              const batchSize = sideConfig?.batch_size || 4;
+              const batchesNeeded = Math.ceil(count / batchSize);
+              const station = sideConfig?.station || 'line';
+              const cookTime = sideConfig?.cook_time || 0;
+
+              return (
+                <div key={name} style={s.sideCard}>
+                  <div style={s.sideHeader}>
+                    <span style={s.sideName}>{name}</span>
+                    <span style={s.sideCount}>{count}x</span>
+                  </div>
+                  <div style={s.sideMeta}>
+                    {station.replace(/_/g, ' ')}
+                    {cookTime > 0 && ` \u00B7 ${cookTime}m cook`}
+                    {` \u00B7 batch of ${batchSize}`}
+                  </div>
+                  {batchesNeeded > 0 && (
+                    <div style={s.sideAction}>
+                      Drop {batchesNeeded} batch{batchesNeeded > 1 ? 'es' : ''}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Quick Tip */}
+          {tips.length > 0 && (
+            <div style={s.quickTip}>
+              <div style={s.quickTipLabel}>TIP</div>
+              <div style={s.quickTipText}>{tips[qualityTipIndex % tips.length]}</div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
+
+// ── Header Component ────────────────────────────────────
+
+function Header({ now, orderCount }) {
+  return (
+    <div style={s.header}>
+      <div style={s.headerLeft}>
+        <span style={s.title}>WILDBIRD</span>
+        <span style={s.titleSub}>LINE COACH</span>
+      </div>
+      <div style={s.headerCenter}>
+        <span style={s.ticketCount}>
+          {orderCount} ACTIVE ORDER{orderCount !== 1 ? 'S' : ''}
+        </span>
+      </div>
+      <span style={s.clock}>{now.toLocaleTimeString()}</span>
+    </div>
+  );
+}
+
+// ── Styles ──────────────────────────────────────────────
+
+const s = {
+  container: {
+    minHeight: '100vh',
+    background: BRAND.charcoal,
+    color: BRAND.bone,
+    fontFamily: "'Open Sans', 'Helvetica Neue', sans-serif",
+  },
+  // Header
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '10px 20px',
+    background: BRAND.charcoalDark,
+    borderBottom: `2px solid ${BRAND.gold}`,
+  },
+  headerLeft: { display: 'flex', alignItems: 'baseline', gap: '8px' },
+  headerCenter: { flex: 1, textAlign: 'center' },
+  title: {
+    fontSize: '1.4rem',
+    fontWeight: 700,
+    color: BRAND.gold,
+    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
+    letterSpacing: '3px',
+  },
+  titleSub: {
+    fontSize: '0.9rem',
+    color: BRAND.cream,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '2px',
+  },
+  ticketCount: {
+    fontSize: '1rem',
+    fontWeight: 700,
+    color: BRAND.bone,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '2px',
+  },
+  clock: {
+    fontSize: '1.1rem',
+    color: BRAND.cream,
+    fontVariantNumeric: 'tabular-nums',
+    fontFamily: "'Open Sans', sans-serif",
+  },
+  // Main Layout
+  mainGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '12px',
+    padding: '12px',
+    minHeight: 'calc(100vh - 60px)',
+  },
+  leftCol: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  rightCol: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  // Panels
+  panel: {
+    background: BRAND.charcoalDark,
+    borderRadius: '8px',
+    padding: '16px',
+    flex: 1,
+  },
+  panelHeader: {
+    fontSize: '1rem',
+    fontWeight: 700,
+    color: BRAND.gold,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '2px',
+    marginBottom: '4px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  panelIcon: { fontSize: '0.7rem', color: BRAND.gold },
+  panelSubtext: {
+    fontSize: '0.8rem',
+    color: `${BRAND.cream}99`,
+    marginBottom: '12px',
+  },
+  emptyState: {
+    textAlign: 'center',
+    color: `${BRAND.cream}60`,
+    padding: '20px',
+    fontSize: '0.9rem',
+  },
+  // Fire Sequence
+  fireRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '8px 0',
+    borderBottom: `1px solid ${BRAND.charcoal}`,
+  },
+  fireIndex: {
+    width: '24px',
+    height: '24px',
+    borderRadius: '50%',
+    background: `${BRAND.gold}20`,
+    color: BRAND.gold,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '0.8rem',
+    fontWeight: 700,
+    fontFamily: "'Oswald', sans-serif",
+    flexShrink: 0,
+  },
+  fireInfo: { flex: 1 },
+  fireName: {
+    fontSize: '0.95rem',
+    color: BRAND.bone,
+    fontFamily: "'Playfair Display', Georgia, serif",
+  },
+  fireMeta: {
+    fontSize: '0.75rem',
+    color: `${BRAND.cream}88`,
+    fontFamily: "'Open Sans', sans-serif",
+  },
+  fireCookTime: {
+    fontSize: '1.1rem',
+    fontWeight: 700,
+    fontFamily: "'Oswald', sans-serif",
+    flexShrink: 0,
+  },
+  // Prep Volume
+  prepRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '6px 0',
+  },
+  prepStation: {
+    width: '80px',
+    fontSize: '0.8rem',
+    color: BRAND.cream,
+    fontFamily: "'Oswald', sans-serif",
+    textTransform: 'uppercase',
+    letterSpacing: '1px',
+    flexShrink: 0,
+  },
+  prepBarOuter: {
+    flex: 1,
+    height: '12px',
+    background: BRAND.charcoal,
+    borderRadius: '6px',
+    overflow: 'hidden',
+  },
+  prepBarInner: {
+    height: '100%',
+    borderRadius: '6px',
+    transition: 'width 0.3s',
+  },
+  prepCount: {
+    width: '28px',
+    textAlign: 'right',
+    fontSize: '0.9rem',
+    fontWeight: 700,
+    color: BRAND.bone,
+    fontFamily: "'Oswald', sans-serif",
+  },
+  categoryRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '4px 0',
+    borderBottom: `1px solid ${BRAND.charcoal}`,
+  },
+  categoryName: {
+    fontSize: '0.85rem',
+    color: BRAND.cream,
+    fontFamily: "'Open Sans', sans-serif",
+  },
+  categoryCount: {
+    fontSize: '0.85rem',
+    fontWeight: 700,
+    color: BRAND.bone,
+    fontFamily: "'Oswald', sans-serif",
+  },
+  // Side Batching
+  sideCard: {
+    background: BRAND.charcoalLight,
+    borderRadius: '6px',
+    padding: '12px',
+    marginBottom: '8px',
+    borderLeft: `3px solid ${BRAND.gold}`,
+  },
+  sideHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  sideName: {
+    fontSize: '1rem',
+    fontWeight: 600,
+    color: BRAND.bone,
+    fontFamily: "'Playfair Display', Georgia, serif",
+  },
+  sideCount: {
+    fontSize: '1.1rem',
+    fontWeight: 700,
+    color: BRAND.gold,
+    fontFamily: "'Oswald', sans-serif",
+  },
+  sideMeta: {
+    fontSize: '0.8rem',
+    color: `${BRAND.cream}88`,
+    marginTop: '4px',
+    fontFamily: "'Open Sans', sans-serif",
+    textTransform: 'capitalize',
+  },
+  sideAction: {
+    marginTop: '8px',
+    fontSize: '0.85rem',
+    fontWeight: 700,
+    color: BRAND.terracotta,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '1px',
+    textTransform: 'uppercase',
+  },
+  // Quick Tip
+  quickTip: {
+    background: BRAND.charcoalDark,
+    borderRadius: '8px',
+    padding: '16px',
+    borderLeft: `3px solid ${BRAND.sage}`,
+  },
+  quickTipLabel: {
+    fontSize: '0.75rem',
+    color: BRAND.sage,
+    fontWeight: 700,
+    letterSpacing: '2px',
+    marginBottom: '8px',
+    fontFamily: "'Oswald', sans-serif",
+  },
+  quickTipText: {
+    fontSize: '0.95rem',
+    color: BRAND.cream,
+    lineHeight: 1.5,
+    fontFamily: "'Playfair Display', Georgia, serif",
+  },
+  // Quality Coach
+  qualityCoach: {
+    background: BRAND.charcoalDark,
+    border: `2px solid ${BRAND.gold}`,
+    borderRadius: '12px',
+    padding: '40px',
+    textAlign: 'center',
+    maxWidth: '700px',
+    margin: '80px auto',
+  },
+  qualityLabel: {
+    fontSize: '0.9rem',
+    color: BRAND.gold,
+    fontWeight: 700,
+    letterSpacing: '3px',
+    marginBottom: '20px',
+    fontFamily: "'Oswald', sans-serif",
+  },
+  qualityTip: {
+    fontSize: '1.5rem',
+    lineHeight: 1.6,
+    color: BRAND.bone,
+    fontFamily: "'Playfair Display', Georgia, serif",
+  },
+};
