@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
 // ── WILDBIRD Brand Colors ───────────────────────────────
 
@@ -15,188 +15,30 @@ const BRAND = {
   charcoalDark: '#1E1E1E',
   bone: '#F5F1E8',
   white: '#FFFFFF',
-  sage: '#A8B5A0',
+  cream: '#E8DCC8',
   terracotta: '#C8654A',
   blue: '#4A7C8C',
-  cream: '#E8DCC8',
   red: '#D64545',
   yellow: '#F2C94C',
   green: '#6FCF97',
 };
 
-// ── Styles ──────────────────────────────────────────────
+// Time thresholds (minutes)
+const TIME_GREEN = 4;   // 0–4 min: on track
+const TIME_YELLOW = 7;  // 4–7 min: warning
+const TIME_RED = 10;    // 7+ min: overdue
 
-const styles = {
-  container: {
-    minHeight: '100vh',
-    background: BRAND.charcoal,
-    color: BRAND.bone,
-    padding: '16px',
-    boxSizing: 'border-box',
-  },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '10px 20px',
-    background: BRAND.charcoalDark,
-    borderRadius: '8px',
-    marginBottom: '16px',
-    borderBottom: `2px solid ${BRAND.gold}`,
-  },
-  title: {
-    fontSize: '1.6rem',
-    fontWeight: 700,
-    color: BRAND.gold,
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-    letterSpacing: '3px',
-    textTransform: 'uppercase',
-  },
-  clock: {
-    fontSize: '1.2rem',
-    color: BRAND.cream,
-    fontVariantNumeric: 'tabular-nums',
-    fontFamily: "'Open Sans', sans-serif",
-  },
-  lanesGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: '16px',
-    flex: 1,
-  },
-  lane: {
-    background: BRAND.charcoalDark,
-    borderRadius: '8px',
-    padding: '12px',
-    minHeight: '300px',
-  },
-  laneHeader: {
-    fontSize: '1.1rem',
-    fontWeight: 700,
-    padding: '10px 14px',
-    borderRadius: '6px',
-    marginBottom: '12px',
-    textAlign: 'center',
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-    letterSpacing: '2px',
-    textTransform: 'uppercase',
-  },
-  orderCard: {
-    background: BRAND.charcoalLight,
-    borderRadius: '6px',
-    padding: '10px 12px',
-    marginBottom: '8px',
-    cursor: 'pointer',
-    transition: 'transform 0.1s',
-  },
-  orderNumber: {
-    fontWeight: 700,
-    fontSize: '1.1rem',
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-    color: BRAND.bone,
-  },
-  orderAge: { fontSize: '0.8rem', color: BRAND.cream, marginLeft: '8px' },
-  itemList: {
-    margin: '6px 0 0 0',
-    padding: 0,
-    listStyle: 'none',
-    fontSize: '0.9rem',
-    fontFamily: "'Playfair Display', Georgia, serif",
-  },
-  rushBadge: {
-    background: BRAND.red,
-    color: BRAND.white,
-    padding: '2px 8px',
-    borderRadius: '4px',
-    fontSize: '0.75rem',
-    fontWeight: 700,
-    marginLeft: '8px',
-    fontFamily: "'Oswald', sans-serif",
-    letterSpacing: '1px',
-  },
-  sideBatch: {
-    background: BRAND.charcoalDark,
-    borderRadius: '8px',
-    padding: '12px',
-    marginTop: '16px',
-    borderLeft: `3px solid ${BRAND.gold}`,
-  },
-  sideBatchTitle: {
-    fontWeight: 700,
-    marginBottom: '8px',
-    color: BRAND.gold,
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-    letterSpacing: '2px',
-    textTransform: 'uppercase',
-  },
-  sidePill: {
-    display: 'inline-block',
-    background: BRAND.charcoalLight,
-    color: BRAND.bone,
-    padding: '4px 14px',
-    borderRadius: '16px',
-    margin: '4px',
-    fontSize: '0.85rem',
-    border: `1px solid ${BRAND.gold}40`,
-  },
-  qualityCoach: {
-    background: BRAND.charcoalDark,
-    border: `2px solid ${BRAND.gold}`,
-    borderRadius: '12px',
-    padding: '40px',
-    textAlign: 'center',
-    maxWidth: '700px',
-    margin: '80px auto',
-  },
-  qualityLabel: {
-    fontSize: '0.9rem',
-    color: BRAND.gold,
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: '3px',
-    marginBottom: '20px',
-    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
-  },
-  qualityTip: {
-    fontSize: '1.5rem',
-    lineHeight: 1.6,
-    color: BRAND.bone,
-    fontFamily: "'Playfair Display', Georgia, serif",
-  },
-  bumpBtn: {
-    background: BRAND.gold,
-    color: BRAND.charcoal,
-    border: 'none',
-    padding: '6px 16px',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontSize: '0.85rem',
-    fontWeight: 700,
-    marginTop: '6px',
-    fontFamily: "'Oswald', sans-serif",
-    letterSpacing: '1px',
-    textTransform: 'uppercase',
-  },
-  stats: {
-    display: 'flex',
-    gap: '24px',
-    fontSize: '0.85rem',
-    color: BRAND.cream,
-    fontFamily: "'Open Sans', sans-serif",
-  },
-};
+function getTicketColor(ageMinutes) {
+  if (ageMinutes < TIME_GREEN) return { bg: '#2D4A3E', border: BRAND.green, label: BRAND.green };
+  if (ageMinutes < TIME_YELLOW) return { bg: '#4A4428', border: BRAND.yellow, label: BRAND.yellow };
+  return { bg: '#4A2828', border: BRAND.red, label: BRAND.red };
+}
 
-const LANE_COLORS = {
-  'Fire Now': BRAND.terracotta,
-  'Staging': BRAND.yellow,
-  'On Deck': BRAND.blue,
-};
-
-const LANE_TEXT_COLORS = {
-  'Fire Now': BRAND.white,
-  'Staging': BRAND.charcoal,
-  'On Deck': BRAND.white,
-};
+function formatElapsed(ageMinutes) {
+  const mins = Math.floor(ageMinutes);
+  const secs = Math.floor((ageMinutes - mins) * 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
 
 // ── Component ───────────────────────────────────────────
 
@@ -205,6 +47,7 @@ export default function LineCoachDisplay({ storeId }) {
   const [config, setConfig] = useState(null);
   const [now, setNow] = useState(new Date());
   const [qualityTipIndex, setQualityTipIndex] = useState(0);
+  const [selectedTicket, setSelectedTicket] = useState(null);
   const supabaseRef = useRef(null);
 
   useEffect(() => {
@@ -227,26 +70,16 @@ export default function LineCoachDisplay({ storeId }) {
       .catch(console.error);
   }, [storeId]);
 
-  useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
+  useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
   useEffect(() => {
     const client = supabaseRef.current;
     if (!client) return;
-
     const channel = client
       .channel('lc-orders-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'lc_orders', filter: `store_id=eq.${storeId}` },
-        () => fetchOrders()
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lc_orders', filter: `store_id=eq.${storeId}` }, () => fetchOrders())
       .subscribe();
-
-    return () => {
-      client.removeChannel(channel);
-    };
+    return () => { client.removeChannel(channel); };
   }, [storeId, fetchOrders]);
 
   useEffect(() => {
@@ -256,9 +89,7 @@ export default function LineCoachDisplay({ storeId }) {
 
   useEffect(() => {
     const tipInterval = (config?.settings?.quality_coach_interval || 30) * 1000;
-    const interval = setInterval(() => {
-      setQualityTipIndex((i) => i + 1);
-    }, tipInterval);
+    const interval = setInterval(() => setQualityTipIndex((i) => i + 1), tipInterval);
     return () => clearInterval(interval);
   }, [config]);
 
@@ -276,23 +107,43 @@ export default function LineCoachDisplay({ storeId }) {
     return () => clearInterval(interval);
   }, [storeId]);
 
-  // ── Lane classification ─────────────────────────────
+  // ── Bump handler ────────────────────────────────────
 
-  const holdTimes = config?.hold_times || { fire_now: 5, staging: 15, on_deck: 30 };
-
-  function classifyOrder(order) {
-    const ageMinutes = (now - new Date(order.fire_at)) / 60_000;
-    if (order.priority === 'rush' || ageMinutes >= 0) {
-      if (ageMinutes >= -holdTimes.fire_now) return 'Fire Now';
-    }
-    if (ageMinutes >= -holdTimes.staging) return 'Staging';
-    return 'On Deck';
+  async function handleBump(orderId) {
+    await fetch('/api/line-coach/bump', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId }),
+    });
+    setOrders((prev) => prev.filter((o) => o.id !== orderId));
+    setSelectedTicket(null);
   }
 
-  const lanes = { 'Fire Now': [], 'Staging': [], 'On Deck': [] };
-  for (const order of orders) {
-    const lane = classifyOrder(order);
-    lanes[lane].push(order);
+  // ── Quality Coach mode ──────────────────────────────
+
+  const tips = config?.quality_tips || [];
+  const isSlowPeriod = orders.length === 0;
+
+  if (isSlowPeriod && tips.length > 0) {
+    const tip = tips[qualityTipIndex % tips.length];
+    return (
+      <div style={s.container}>
+        <div style={s.header}>
+          <div style={s.headerLeft}>
+            <span style={s.title}>WILDBIRD</span>
+            <span style={s.titleSub}>LINE COACH</span>
+          </div>
+          <div style={s.headerCenter}>
+            <span style={s.ticketCount}>0 TICKETS</span>
+          </div>
+          <span style={s.clock}>{now.toLocaleTimeString()}</span>
+        </div>
+        <div style={s.qualityCoach}>
+          <div style={s.qualityLabel}>QUALITY COACH</div>
+          <div style={s.qualityTip}>{tip}</div>
+        </div>
+      </div>
+    );
   }
 
   // ── Side batching ───────────────────────────────────
@@ -311,134 +162,318 @@ export default function LineCoachDisplay({ storeId }) {
       .sort((a, b) => b[1] - a[1]);
   }
 
-  // ── Bump handler ────────────────────────────────────
-
-  async function handleBump(orderId) {
-    await fetch('/api/line-coach/bump', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId }),
-    });
-    setOrders((prev) => prev.filter((o) => o.id !== orderId));
-  }
-
-  // ── Quality Coach mode ──────────────────────────────
-
-  const tips = config?.quality_tips || [];
-  const isSlowPeriod = orders.length === 0;
-
-  if (isSlowPeriod && tips.length > 0) {
-    const tip = tips[qualityTipIndex % tips.length];
-    return (
-      <div style={styles.container}>
-        <div style={styles.header}>
-          <span style={styles.title}>WILDBIRD LINE COACH</span>
-          <span style={styles.clock}>{now.toLocaleTimeString()}</span>
-        </div>
-        <div style={styles.qualityCoach}>
-          <div style={styles.qualityLabel}>Quality Coach</div>
-          <div style={styles.qualityTip}>{tip}</div>
-        </div>
-      </div>
-    );
-  }
-
   // ── Render ──────────────────────────────────────────
 
+  const sortedOrders = [...orders].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   const batchedSides = getBatchedSides();
 
-  function formatAge(fireAt) {
-    const mins = Math.round((now - new Date(fireAt)) / 60_000);
-    if (mins <= 0) return 'just now';
-    return `${mins}m ago`;
-  }
-
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <span style={styles.title}>WILDBIRD LINE COACH</span>
-        <div style={styles.stats}>
-          <span>Active: {orders.length}</span>
-          <span>Fire Now: {lanes['Fire Now'].length}</span>
+    <div style={s.container}>
+      {/* Header Bar */}
+      <div style={s.header}>
+        <div style={s.headerLeft}>
+          <span style={s.title}>WILDBIRD</span>
+          <span style={s.titleSub}>LINE COACH</span>
         </div>
-        <span style={styles.clock}>{now.toLocaleTimeString()}</span>
-      </div>
-
-      <div style={styles.lanesGrid}>
-        {Object.entries(lanes).map(([laneName, laneOrders]) => (
-          <div key={laneName} style={styles.lane}>
-            <div style={{
-              ...styles.laneHeader,
-              background: LANE_COLORS[laneName],
-              color: LANE_TEXT_COLORS[laneName],
-            }}>
-              {laneName} ({laneOrders.length})
+        <div style={s.headerCenter}>
+          <span style={s.ticketCount}>{orders.length} TICKET{orders.length !== 1 ? 'S' : ''}</span>
+          {batchedSides.length > 0 && (
+            <div style={s.batchBar}>
+              {batchedSides.map(([name, count]) => (
+                <span key={name} style={s.batchPill}>{count}x {name}</span>
+              ))}
             </div>
-            {laneOrders.map((order) => (
-              <div key={order.id} style={{
-                ...styles.orderCard,
-                borderLeft: order.priority === 'rush'
-                  ? `4px solid ${BRAND.red}`
-                  : `4px solid ${BRAND.gold}40`,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div>
-                    <span style={styles.orderNumber}>#{order.order_number || '—'}</span>
-                    <span style={styles.orderAge}>{formatAge(order.fire_at)}</span>
-                    {order.priority === 'rush' && <span style={styles.rushBadge}>RUSH</span>}
-                  </div>
-                  <button style={styles.bumpBtn} onClick={() => handleBump(order.id)}>
-                    BUMP
-                  </button>
-                </div>
-                <ul style={styles.itemList}>
-                  {(order.items || []).map((item, i) => (
-                    <li key={i} style={{ padding: '2px 0', color: BRAND.bone }}>
-                      {item.quantity > 1 ? `${item.quantity}x ` : ''}{item.name}
-                      {item.modifiers?.length > 0 && (
-                        <span style={{ color: BRAND.cream, fontSize: '0.8rem' }}>
-                          {' '}({item.modifiers.join(', ')})
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                  {(order.sides || []).map((side, i) => (
-                    <li key={`s-${i}`} style={{ padding: '2px 0', color: BRAND.cream }}>
-                      + {typeof side === 'string' ? side : side.name}
-                    </li>
-                  ))}
-                </ul>
-                {order.notes && (
-                  <div style={{ fontSize: '0.8rem', color: BRAND.gold, marginTop: '4px' }}>
-                    Note: {order.notes}
-                  </div>
-                )}
-              </div>
-            ))}
-            {laneOrders.length === 0 && (
-              <div style={{
-                textAlign: 'center',
-                color: `${BRAND.cream}80`,
-                padding: '20px',
-                fontSize: '0.9rem',
-              }}>
-                No orders
-              </div>
-            )}
+          )}
+        </div>
+        <div style={s.headerRight}>
+          <div style={s.legend}>
+            <span style={{ ...s.legendDot, background: BRAND.green }} />
+            <span style={s.legendText}>&lt;{TIME_GREEN}m</span>
+            <span style={{ ...s.legendDot, background: BRAND.yellow }} />
+            <span style={s.legendText}>&lt;{TIME_YELLOW}m</span>
+            <span style={{ ...s.legendDot, background: BRAND.red }} />
+            <span style={s.legendText}>{TIME_YELLOW}m+</span>
           </div>
-        ))}
+          <span style={s.clock}>{now.toLocaleTimeString()}</span>
+        </div>
       </div>
 
-      {batchedSides.length > 0 && (
-        <div style={styles.sideBatch}>
-          <div style={styles.sideBatchTitle}>Batch Sides</div>
-          {batchedSides.map(([name, count]) => (
-            <span key={name} style={styles.sidePill}>
-              {name}: {count}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* Ticket Grid */}
+      <div style={s.grid}>
+        {sortedOrders.map((order, index) => {
+          const ageMinutes = (now - new Date(order.created_at)) / 60_000;
+          const colors = getTicketColor(ageMinutes);
+          const isSelected = selectedTicket === order.id;
+
+          return (
+            <div
+              key={order.id}
+              style={{
+                ...s.ticket,
+                borderTop: `4px solid ${colors.border}`,
+                background: isSelected ? colors.bg : BRAND.charcoalDark,
+                outline: isSelected ? `2px solid ${BRAND.gold}` : 'none',
+              }}
+              onClick={() => setSelectedTicket(isSelected ? null : order.id)}
+            >
+              {/* Ticket Header */}
+              <div style={{ ...s.ticketHeader, background: colors.bg }}>
+                <div style={s.ticketNum}>
+                  <span style={s.ticketIndex}>{index + 1}</span>
+                  <span style={s.orderNum}>#{order.order_number || '—'}</span>
+                  {order.priority === 'rush' && <span style={s.rushBadge}>RUSH</span>}
+                </div>
+                <span style={{ ...s.timer, color: colors.label }}>{formatElapsed(ageMinutes)}</span>
+              </div>
+
+              {/* Ticket Items */}
+              <div style={s.ticketBody}>
+                {(order.items || []).map((item, i) => (
+                  <div key={i} style={s.ticketItem}>
+                    <span style={s.itemQty}>{item.quantity > 1 ? `${item.quantity}x` : '1x'}</span>
+                    <span style={s.itemName}>{item.name}</span>
+                    {item.modifiers?.length > 0 && (
+                      <div style={s.itemMods}>{item.modifiers.join(', ')}</div>
+                    )}
+                  </div>
+                ))}
+                {(order.sides || []).map((side, i) => (
+                  <div key={`s-${i}`} style={s.ticketSide}>
+                    <span style={s.itemQty}>+</span>
+                    <span style={s.sideName}>{typeof side === 'string' ? side : side.name}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Notes */}
+              {order.notes && (
+                <div style={s.ticketNotes}>
+                  {order.notes}
+                </div>
+              )}
+
+              {/* Bump Button */}
+              <button
+                style={s.bumpBtn}
+                onClick={(e) => { e.stopPropagation(); handleBump(order.id); }}
+              >
+                FULFILL
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
+
+// ── Styles ──────────────────────────────────────────────
+
+const s = {
+  container: {
+    minHeight: '100vh',
+    background: BRAND.charcoal,
+    color: BRAND.bone,
+    fontFamily: "'Open Sans', 'Helvetica Neue', sans-serif",
+  },
+  // Header
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 16px',
+    background: BRAND.charcoalDark,
+    borderBottom: `2px solid ${BRAND.gold}`,
+  },
+  headerLeft: { display: 'flex', alignItems: 'baseline', gap: '8px' },
+  headerCenter: { display: 'flex', alignItems: 'center', gap: '16px', flex: 1, justifyContent: 'center' },
+  headerRight: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' },
+  title: {
+    fontSize: '1.4rem',
+    fontWeight: 700,
+    color: BRAND.gold,
+    fontFamily: "'Oswald', 'Arial Narrow', sans-serif",
+    letterSpacing: '3px',
+  },
+  titleSub: {
+    fontSize: '0.9rem',
+    fontWeight: 400,
+    color: BRAND.cream,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '2px',
+  },
+  ticketCount: {
+    fontSize: '1rem',
+    fontWeight: 700,
+    color: BRAND.bone,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '2px',
+  },
+  clock: {
+    fontSize: '1rem',
+    color: BRAND.cream,
+    fontVariantNumeric: 'tabular-nums',
+    fontFamily: "'Open Sans', sans-serif",
+  },
+  legend: { display: 'flex', alignItems: 'center', gap: '6px' },
+  legendDot: { width: '8px', height: '8px', borderRadius: '50%', display: 'inline-block' },
+  legendText: { fontSize: '0.7rem', color: BRAND.cream, fontFamily: "'Open Sans', sans-serif" },
+  // Batch bar
+  batchBar: { display: 'flex', gap: '6px', flexWrap: 'wrap' },
+  batchPill: {
+    fontSize: '0.75rem',
+    padding: '2px 10px',
+    borderRadius: '12px',
+    background: `${BRAND.gold}20`,
+    color: BRAND.gold,
+    border: `1px solid ${BRAND.gold}40`,
+    fontWeight: 600,
+    fontFamily: "'Open Sans', sans-serif",
+  },
+  // Ticket Grid
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+    gap: '8px',
+    padding: '12px',
+  },
+  // Ticket Card
+  ticket: {
+    background: BRAND.charcoalDark,
+    borderRadius: '6px',
+    overflow: 'hidden',
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    transition: 'outline 0.1s',
+  },
+  ticketHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 12px',
+  },
+  ticketNum: { display: 'flex', alignItems: 'center', gap: '8px' },
+  ticketIndex: {
+    fontSize: '0.75rem',
+    color: BRAND.cream,
+    fontFamily: "'Open Sans', sans-serif",
+    background: `${BRAND.white}15`,
+    padding: '1px 6px',
+    borderRadius: '3px',
+  },
+  orderNum: {
+    fontSize: '1.1rem',
+    fontWeight: 700,
+    fontFamily: "'Oswald', sans-serif",
+    color: BRAND.bone,
+    letterSpacing: '1px',
+  },
+  timer: {
+    fontSize: '1.1rem',
+    fontWeight: 700,
+    fontFamily: "'Oswald', sans-serif",
+    fontVariantNumeric: 'tabular-nums',
+    letterSpacing: '1px',
+  },
+  rushBadge: {
+    background: BRAND.red,
+    color: BRAND.white,
+    padding: '1px 8px',
+    borderRadius: '3px',
+    fontSize: '0.7rem',
+    fontWeight: 700,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '1px',
+  },
+  // Ticket Body
+  ticketBody: {
+    padding: '8px 12px',
+    flex: 1,
+  },
+  ticketItem: {
+    padding: '3px 0',
+    borderBottom: `1px solid ${BRAND.charcoal}`,
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    gap: '6px',
+  },
+  itemQty: {
+    fontSize: '0.85rem',
+    fontWeight: 700,
+    color: BRAND.cream,
+    fontFamily: "'Open Sans', sans-serif",
+    minWidth: '24px',
+  },
+  itemName: {
+    fontSize: '0.95rem',
+    color: BRAND.bone,
+    fontFamily: "'Playfair Display', Georgia, serif",
+  },
+  itemMods: {
+    fontSize: '0.8rem',
+    color: BRAND.cream,
+    fontFamily: "'Open Sans', sans-serif",
+    width: '100%',
+    paddingLeft: '30px',
+    fontStyle: 'italic',
+  },
+  ticketSide: {
+    padding: '2px 0',
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: '6px',
+  },
+  sideName: {
+    fontSize: '0.85rem',
+    color: BRAND.cream,
+    fontFamily: "'Open Sans', sans-serif",
+  },
+  ticketNotes: {
+    padding: '6px 12px',
+    fontSize: '0.8rem',
+    color: BRAND.gold,
+    background: `${BRAND.gold}10`,
+    borderTop: `1px solid ${BRAND.gold}30`,
+    fontFamily: "'Open Sans', sans-serif",
+  },
+  // Bump Button
+  bumpBtn: {
+    background: BRAND.gold,
+    color: BRAND.charcoal,
+    border: 'none',
+    padding: '8px',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    fontWeight: 700,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '2px',
+    textTransform: 'uppercase',
+    width: '100%',
+  },
+  // Quality Coach
+  qualityCoach: {
+    background: BRAND.charcoalDark,
+    border: `2px solid ${BRAND.gold}`,
+    borderRadius: '12px',
+    padding: '40px',
+    textAlign: 'center',
+    maxWidth: '700px',
+    margin: '80px auto',
+  },
+  qualityLabel: {
+    fontSize: '0.9rem',
+    color: BRAND.gold,
+    fontWeight: 700,
+    letterSpacing: '3px',
+    marginBottom: '20px',
+    fontFamily: "'Oswald', sans-serif",
+  },
+  qualityTip: {
+    fontSize: '1.5rem',
+    lineHeight: 1.6,
+    color: BRAND.bone,
+    fontFamily: "'Playfair Display', Georgia, serif",
+  },
+};
