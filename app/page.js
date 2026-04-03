@@ -4,11 +4,17 @@ import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import LineCoachDisplay from '@/src/LineCoachDisplay';
 import LineCoachAdmin from '@/src/LineCoachAdmin';
+import LineCoachSimulator from '@/src/LineCoachSimulator';
 
 function LineCoachRouter() {
   const searchParams = useSearchParams();
   const isAdmin = searchParams.has('admin');
+  const isSimulator = searchParams.has('simulator');
   const store = searchParams.get('store') || 'hollywood';
+
+  if (isSimulator) {
+    return <LineCoachSimulator storeId={store} />;
+  }
 
   if (isAdmin) {
     return <LineCoachAdmin storeId={store} />;

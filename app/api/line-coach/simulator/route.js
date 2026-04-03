@@ -1,0 +1,279 @@
+import { NextResponse } from 'next/server';
+import { insertOrder, getActiveOrders } from '@/lib/line-coach';
+import { getServiceClient, withRetry } from '@/lib/supabase';
+
+// ── Scenario Definitions ────────────────────────────────
+
+const SCENARIOS = {
+  lunch_rush: {
+    name: 'Lunch Rush',
+    description: '8 orders across all categories, heavy on chicken and sides',
+    orders: [
+      {
+        order_number: 'SIM-101',
+        items: [{ name: 'Quarter Bird', quantity: 1 }, { name: 'Boneless Breast Market Plate', quantity: 1 }],
+        sides: [{ name: 'Spanish Rice', quantity: 1 }, { name: 'Kale Slaw', quantity: 1 }, { name: 'Sweet Potatoes', quantity: 1 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-102',
+        items: [{ name: 'Tacos Dorados', quantity: 2 }],
+        sides: [{ name: 'Spanish Rice', quantity: 2 }, { name: 'Chips and Guac', quantity: 1 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-103',
+        items: [{ name: 'Half Bird', quantity: 1 }],
+        sides: [{ name: 'Mac Salad', quantity: 1 }, { name: 'Charro Beans', quantity: 1 }],
+        priority: 'rush',
+      },
+      {
+        order_number: 'SIM-104',
+        items: [{ name: 'Chicken Tinga Market Plate', quantity: 1 }, { name: 'Burrito Mexicano', quantity: 1 }],
+        sides: [{ name: 'Spanish Rice', quantity: 2 }, { name: 'Mexican Street Corn', quantity: 2 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-105',
+        items: [{ name: 'Veggie Market Plate', quantity: 1 }, { name: 'Superfood Ensalada', quantity: 1 }],
+        sides: [{ name: 'Broccoli', quantity: 1 }, { name: 'Sweet Potatoes', quantity: 1 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-106',
+        items: [{ name: 'Whole Bird', quantity: 1 }, { name: 'Kids Quesadilla', quantity: 2 }],
+        sides: [{ name: 'Spanish Rice', quantity: 2 }, { name: 'Kale Slaw', quantity: 2 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-107',
+        items: [{ name: 'Pollo Verde Market Plate', quantity: 1 }],
+        sides: [{ name: 'Uptown Mac & Cheese', quantity: 1 }, { name: 'Brussel Sprouts', quantity: 1 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-108',
+        items: [{ name: 'Tostada Bowl', quantity: 1 }, { name: 'Harvest Bowl', quantity: 1 }],
+        sides: [{ name: 'Chips and Guac', quantity: 2 }, { name: 'Buffalo Cauliflower', quantity: 1 }],
+        priority: 'normal',
+      },
+    ],
+  },
+
+  side_heavy: {
+    name: 'Side Heavy',
+    description: '5 orders with lots of duplicate sides — tests batch coaching',
+    orders: [
+      {
+        order_number: 'SIM-201',
+        items: [{ name: 'Quarter Bird', quantity: 2 }],
+        sides: [{ name: 'Spanish Rice', quantity: 2 }, { name: 'Sweet Potatoes', quantity: 2 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-202',
+        items: [{ name: 'Half Bird', quantity: 1 }],
+        sides: [{ name: 'Spanish Rice', quantity: 1 }, { name: 'Mac Salad', quantity: 1 }, { name: 'Sweet Potatoes', quantity: 1 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-203',
+        items: [{ name: 'Chicken Dinner Box', quantity: 1 }],
+        sides: [{ name: 'Spanish Rice', quantity: 2 }, { name: 'Kale Slaw', quantity: 2 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-204',
+        items: [{ name: 'Protein Plate', quantity: 3 }],
+        sides: [{ name: 'Sweet Potatoes', quantity: 3 }, { name: 'Broccoli', quantity: 3 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-205',
+        items: [{ name: 'Boneless Breast Market Plate', quantity: 2 }],
+        sides: [{ name: 'Spanish Rice', quantity: 2 }, { name: 'Charro Beans', quantity: 2 }, { name: 'Sweet Potatoes', quantity: 2 }],
+        priority: 'normal',
+      },
+    ],
+  },
+
+  mexican_wave: {
+    name: 'Mexican Wave',
+    description: '6 orders heavy on Modern Mexican — tests fryer and line stations',
+    orders: [
+      {
+        order_number: 'SIM-301',
+        items: [{ name: 'Tacos Dorados', quantity: 2 }, { name: 'Taco (Single)', quantity: 1 }],
+        sides: [{ name: 'Chips and Guac', quantity: 1 }, { name: 'Mexican Street Corn', quantity: 1 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-302',
+        items: [{ name: 'Burrito Mexicano', quantity: 2 }],
+        sides: [{ name: 'Spanish Rice', quantity: 2 }, { name: 'Charro Beans', quantity: 2 }],
+        priority: 'rush',
+      },
+      {
+        order_number: 'SIM-303',
+        items: [{ name: 'Tostada Bowl', quantity: 1 }, { name: 'Tacos Dorados', quantity: 1 }],
+        sides: [{ name: 'Chips and Guac', quantity: 2 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-304',
+        items: [{ name: 'Kids Quesadilla', quantity: 3 }],
+        sides: [{ name: 'Spanish Rice', quantity: 3 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-305',
+        items: [{ name: 'Chicken Tinga Market Plate', quantity: 1 }, { name: 'Pollo Verde Market Plate', quantity: 1 }],
+        sides: [{ name: 'Mexican Street Corn', quantity: 2 }, { name: 'Buffalo Cauliflower', quantity: 1 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-306',
+        items: [{ name: 'Burrito Mexicano', quantity: 1 }, { name: 'Taco (Single)', quantity: 2 }],
+        sides: [{ name: 'Chips and Guac', quantity: 1 }, { name: 'Charro Beans', quantity: 1 }],
+        priority: 'normal',
+      },
+    ],
+  },
+
+  single_order: {
+    name: 'Single Order',
+    description: '1 simple order to test minimal state',
+    orders: [
+      {
+        order_number: 'SIM-401',
+        items: [{ name: 'Quarter Bird', quantity: 1 }],
+        sides: [{ name: 'Spanish Rice', quantity: 1 }, { name: 'Kale Slaw', quantity: 1 }],
+        priority: 'normal',
+      },
+    ],
+  },
+
+  catering_bomb: {
+    name: 'Catering Bomb',
+    description: 'Large catering order + regular orders — tests volume alerts',
+    orders: [
+      {
+        order_number: 'SIM-501',
+        items: [
+          { name: 'Whole Bird', quantity: 5 },
+          { name: 'Boneless Breast Market Plate', quantity: 10 },
+        ],
+        sides: [
+          { name: 'Spanish Rice', quantity: 10 },
+          { name: 'Kale Slaw', quantity: 10 },
+          { name: 'Sweet Potatoes', quantity: 10 },
+          { name: 'Charro Beans', quantity: 10 },
+        ],
+        priority: 'rush',
+        notes: 'CATERING ORDER — pickup at 12:30',
+      },
+      {
+        order_number: 'SIM-502',
+        items: [{ name: 'Tacos Dorados', quantity: 1 }],
+        sides: [{ name: 'Chips and Guac', quantity: 1 }],
+        priority: 'normal',
+      },
+      {
+        order_number: 'SIM-503',
+        items: [{ name: 'Half Bird', quantity: 1 }, { name: 'Harvest Bowl', quantity: 1 }],
+        sides: [{ name: 'Brussel Sprouts', quantity: 1 }, { name: 'Mexican Street Corn', quantity: 1 }],
+        priority: 'normal',
+      },
+    ],
+  },
+};
+
+// ── POST: Run a scenario ────────────────────────────────
+
+export async function POST(request) {
+  try {
+    const body = await request.json();
+    const { scenario, store_id = 'hollywood', action = 'run' } = body;
+
+    // Clear simulator orders
+    if (action === 'clear') {
+      const db = getServiceClient();
+      await withRetry(() =>
+        db.from('lc_orders')
+          .update({ status: 'cancelled' })
+          .eq('store_id', store_id)
+          .like('order_number', 'SIM-%')
+      );
+      return NextResponse.json({ status: 'cleared' });
+    }
+
+    // Run a scenario
+    if (!scenario || !SCENARIOS[scenario]) {
+      return NextResponse.json({
+        error: 'Invalid scenario',
+        available: Object.entries(SCENARIOS).map(([key, s]) => ({
+          key,
+          name: s.name,
+          description: s.description,
+          orderCount: s.orders.length,
+        })),
+      }, { status: 400 });
+    }
+
+    const scenarioData = SCENARIOS[scenario];
+    const results = [];
+
+    // Clear previous sim orders first
+    const db = getServiceClient();
+    await withRetry(() =>
+      db.from('lc_orders')
+        .update({ status: 'cancelled' })
+        .eq('store_id', store_id)
+        .like('order_number', 'SIM-%')
+    );
+
+    // Insert orders with staggered timestamps
+    for (let i = 0; i < scenarioData.orders.length; i++) {
+      const orderDef = scenarioData.orders[i];
+      const staggerMs = i * 15_000; // 15 seconds apart
+      const fireAt = new Date(Date.now() - staggerMs);
+
+      const order = {
+        store_id,
+        order_number: orderDef.order_number,
+        items: orderDef.items,
+        sides: orderDef.sides,
+        priority: orderDef.priority || 'normal',
+        fire_at: fireAt.toISOString(),
+        notes: orderDef.notes || null,
+      };
+
+      const { data, error } = await insertOrder(order);
+      results.push({ order_number: orderDef.order_number, success: !error, error: error?.message });
+    }
+
+    return NextResponse.json({
+      status: 'ok',
+      scenario: scenarioData.name,
+      description: scenarioData.description,
+      ordersInserted: results.filter((r) => r.success).length,
+      results,
+    });
+  } catch (err) {
+    console.error('Simulator error:', err);
+    return NextResponse.json({ error: 'Simulator failed' }, { status: 500 });
+  }
+}
+
+// ── GET: List available scenarios ───────────────────────
+
+export async function GET() {
+  const scenarios = Object.entries(SCENARIOS).map(([key, s]) => ({
+    key,
+    name: s.name,
+    description: s.description,
+    orderCount: s.orders.length,
+  }));
+
+  return NextResponse.json({ scenarios });
+}
