@@ -24,6 +24,12 @@ const BRAND = {
   sage: '#A8B5A0',
 };
 
+// Side name → image filename mapping
+function getSideImageUrl(name) {
+  const slug = name.toLowerCase().replace(/[&]/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
+  return `/sides/${slug}.jpg`;
+}
+
 // ── Component ───────────────────────────────────────────
 
 export default function LineCoachDisplay({ storeId }) {
@@ -289,22 +295,36 @@ export default function LineCoachDisplay({ storeId }) {
               const station = sideConfig?.station || 'line';
               const cookTime = sideConfig?.cook_time || 0;
 
+              const imageUrl = getSideImageUrl(name);
+
               return (
                 <div key={name} style={s.sideCard}>
-                  <div style={s.sideHeader}>
-                    <span style={s.sideName}>{name}</span>
-                    <span style={s.sideCount}>{count}x</span>
-                  </div>
-                  <div style={s.sideMeta}>
-                    {station.replace(/_/g, ' ')}
-                    {cookTime > 0 && ` \u00B7 ${cookTime}m cook`}
-                    {` \u00B7 batch of ${batchSize}`}
-                  </div>
-                  {batchesNeeded > 0 && (
-                    <div style={s.sideAction}>
-                      Drop {batchesNeeded} batch{batchesNeeded > 1 ? 'es' : ''}
+                  <div style={s.sideCardInner}>
+                    <div style={s.sideImageWrap}>
+                      <img
+                        src={imageUrl}
+                        alt={name}
+                        style={s.sideImage}
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                      />
                     </div>
-                  )}
+                    <div style={s.sideContent}>
+                      <div style={s.sideHeader}>
+                        <span style={s.sideName}>{name}</span>
+                        <span style={s.sideCount}>{count}x</span>
+                      </div>
+                      <div style={s.sideMeta}>
+                        {station.replace(/_/g, ' ')}
+                        {cookTime > 0 && ` \u00B7 ${cookTime}m cook`}
+                        {` \u00B7 batch of ${batchSize}`}
+                      </div>
+                      {batchesNeeded > 0 && (
+                        <div style={s.sideAction}>
+                          Drop {batchesNeeded} batch{batchesNeeded > 1 ? 'es' : ''}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               );
             })}
@@ -523,10 +543,36 @@ const s = {
   // Side Batching
   sideCard: {
     background: BRAND.charcoalLight,
-    borderRadius: '6px',
-    padding: '12px',
-    marginBottom: '8px',
+    borderRadius: '8px',
+    marginBottom: '10px',
+    overflow: 'hidden',
     borderLeft: `3px solid ${BRAND.gold}`,
+  },
+  sideCardInner: {
+    display: 'flex',
+    alignItems: 'stretch',
+  },
+  sideImageWrap: {
+    width: '80px',
+    minHeight: '80px',
+    flexShrink: 0,
+    background: BRAND.charcoalDark,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  sideImage: {
+    width: '80px',
+    height: '80px',
+    objectFit: 'cover',
+  },
+  sideContent: {
+    flex: 1,
+    padding: '10px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
   },
   sideHeader: {
     display: 'flex',
@@ -540,7 +586,7 @@ const s = {
     fontFamily: "'Playfair Display', Georgia, serif",
   },
   sideCount: {
-    fontSize: '1.1rem',
+    fontSize: '1.2rem',
     fontWeight: 700,
     color: BRAND.gold,
     fontFamily: "'Oswald', sans-serif",
@@ -548,12 +594,12 @@ const s = {
   sideMeta: {
     fontSize: '0.8rem',
     color: `${BRAND.cream}88`,
-    marginTop: '4px',
+    marginTop: '2px',
     fontFamily: "'Open Sans', sans-serif",
     textTransform: 'capitalize',
   },
   sideAction: {
-    marginTop: '8px',
+    marginTop: '4px',
     fontSize: '0.85rem',
     fontWeight: 700,
     color: BRAND.terracotta,
