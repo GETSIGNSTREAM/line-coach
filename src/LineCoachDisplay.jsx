@@ -285,41 +285,83 @@ export default function LineCoachDisplay({ storeId }) {
 
         {/* Right Column: Side Batching */}
         <div style={s.rightCol}>
-          <div style={s.panelHeader}>
-            BATCH SIDES
-          </div>
-          {batchedSides.length === 0 && (
-            <div style={s.emptyState}>No sides to batch</div>
-          )}
-          {batchedSides.map(([name, count]) => {
-            const sideConfig = configSides.find((sc) => sc.name === name);
-            const batchSize = sideConfig?.batch_size || 4;
-            const batchesNeeded = Math.ceil(count / batchSize);
-            const cookTime = sideConfig?.cook_time || 0;
-            const imageUrl = getSideImageUrl(name);
+          <div style={s.sidesPanelHeader}>BATCH SIDES</div>
+          <div style={s.sidesContainer}>
+            {batchedSides.length === 0 && (
+              <div style={s.emptyState}>No sides to batch</div>
+            )}
+            {batchedSides.map(([name, count]) => {
+              const sideConfig = configSides.find((sc) => sc.name === name);
+              const batchSize = sideConfig?.batch_size || 4;
+              const batchesNeeded = Math.ceil(count / batchSize);
+              const cookTime = sideConfig?.cook_time || 0;
+              const imageUrl = getSideImageUrl(name);
 
-            return (
-              <div key={name} style={s.sideRow}>
-                <img
-                  src={imageUrl}
-                  alt={name}
-                  style={s.sideImage}
-                  onError={(e) => { e.target.style.display = 'none'; }}
-                />
-                <div style={s.sideInfo}>
-                  <div style={s.sideName}>{name}</div>
-                  {(cookTime > 0 || batchesNeeded > 0) && (
-                    <div style={s.sideAction}>
-                      {cookTime > 0 && <span>{cookTime}m</span>}
-                      {cookTime > 0 && batchesNeeded > 0 && <span> · </span>}
-                      {batchesNeeded > 0 && <span>DROP {batchesNeeded} BATCH{batchesNeeded > 1 ? 'ES' : ''}</span>}
-                    </div>
-                  )}
+              // Dynamic sizing based on number of sides
+              const n = batchedSides.length;
+              const imgSize = n <= 3 ? '12vh' : n <= 6 ? '9vh' : '7vh';
+              const nameSize = n <= 3 ? '2.2vh' : n <= 6 ? '1.8vh' : '1.5vh';
+              const countSize = n <= 3 ? '8vh' : n <= 6 ? '6vh' : '4.5vh';
+              const actionSize = n <= 3 ? '1.5vh' : n <= 6 ? '1.3vh' : '1.1vh';
+
+              return (
+                <div key={name} style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '3%',
+                  flex: 1,
+                  padding: '0 2%',
+                }}>
+                  <img
+                    src={imageUrl}
+                    alt={name}
+                    style={{
+                      width: imgSize,
+                      height: imgSize,
+                      objectFit: 'cover',
+                      borderRadius: '50%',
+                      flexShrink: 0,
+                    }}
+                    onError={(e) => { e.target.style.display = 'none'; }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: `clamp(1rem, ${nameSize}, 2rem)`,
+                      fontWeight: 700,
+                      color: BRAND.bone,
+                      fontFamily: "'Oswald', sans-serif",
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                      lineHeight: 1.2,
+                    }}>{name}</div>
+                    {(cookTime > 0 || batchesNeeded > 0) && (
+                      <div style={{
+                        fontSize: `clamp(0.7rem, ${actionSize}, 1.2rem)`,
+                        fontWeight: 700,
+                        color: BRAND.terracotta,
+                        fontFamily: "'Oswald', sans-serif",
+                        letterSpacing: '1px',
+                        marginTop: '2px',
+                      }}>
+                        {cookTime > 0 && <span>{cookTime}m</span>}
+                        {cookTime > 0 && batchesNeeded > 0 && <span> · </span>}
+                        {batchesNeeded > 0 && <span>DROP {batchesNeeded}</span>}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{
+                    fontSize: `clamp(2rem, ${countSize}, 6rem)`,
+                    fontWeight: 700,
+                    color: BRAND.gold,
+                    fontFamily: "'Oswald', sans-serif",
+                    lineHeight: 1,
+                    flexShrink: 0,
+                    textAlign: 'right',
+                  }}>{count}</div>
                 </div>
-                <div style={s.sideCount}>{count}</div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
 
           {/* Quick Tip */}
           {tips.length > 0 && (
@@ -532,49 +574,19 @@ const s = {
     fontFamily: "'Oswald', sans-serif",
   },
   // Side Batching
-  sideRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '14px',
-    padding: '10px 0',
-    borderBottom: `1px solid ${BRAND.charcoal}`,
-  },
-  sideImage: {
-    width: '64px',
-    height: '64px',
-    objectFit: 'cover',
-    borderRadius: '50%',
-    flexShrink: 0,
-  },
-  sideInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  sideName: {
-    fontSize: '1.3rem',
-    fontWeight: 700,
-    color: BRAND.bone,
-    fontFamily: "'Oswald', sans-serif",
-    letterSpacing: '0.5px',
-    textTransform: 'uppercase',
-  },
-  sideAction: {
-    fontSize: '0.85rem',
-    fontWeight: 700,
-    color: BRAND.terracotta,
-    fontFamily: "'Oswald', sans-serif",
-    letterSpacing: '1px',
-    marginTop: '2px',
-  },
-  sideCount: {
-    fontSize: '3rem',
+  sidesPanelHeader: {
+    fontSize: '1rem',
     fontWeight: 700,
     color: BRAND.gold,
     fontFamily: "'Oswald', sans-serif",
-    lineHeight: 1,
-    flexShrink: 0,
-    minWidth: '50px',
-    textAlign: 'right',
+    letterSpacing: '2px',
+    padding: '8px 2%',
+  },
+  sidesContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minHeight: 0,
   },
   // Quick Tip
   quickTip: {
