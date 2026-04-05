@@ -27,7 +27,7 @@ const BRAND = {
 // Side name → image filename mapping
 function getSideImageUrl(name) {
   const slug = name.toLowerCase().replace(/[&]/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
-  return `/sides/${slug}.png`;
+  return `/sides/${slug}.jpg`;
 }
 
 // ── Component ───────────────────────────────────────────
