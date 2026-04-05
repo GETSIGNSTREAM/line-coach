@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS lc_orders (
   fire_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   bumped_at TIMESTAMPTZ,
-  notes TEXT
+  notes TEXT,
+  dining_option TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_lc_orders_store_status ON lc_orders (store_id, status);
