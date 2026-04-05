@@ -288,46 +288,35 @@ export default function LineCoachDisplay({ storeId }) {
             {batchedSides.length === 0 && (
               <div style={s.emptyState}>No sides to batch</div>
             )}
+            <div style={s.sideGrid}>
             {batchedSides.map(([name, count]) => {
               const sideConfig = configSides.find((sc) => sc.name === name);
               const batchSize = sideConfig?.batch_size || 4;
               const batchesNeeded = Math.ceil(count / batchSize);
-              const station = sideConfig?.station || 'line';
-              const cookTime = sideConfig?.cook_time || 0;
 
               const imageUrl = getSideImageUrl(name);
 
               return (
                 <div key={name} style={s.sideCard}>
-                  <div style={s.sideCardInner}>
-                    <div style={s.sideImageWrap}>
-                      <img
-                        src={imageUrl}
-                        alt={name}
-                        style={s.sideImage}
-                        onError={(e) => { e.target.style.display = 'none'; }}
-                      />
-                    </div>
-                    <div style={s.sideContent}>
-                      <div style={s.sideHeader}>
-                        <span style={s.sideName}>{name}</span>
-                        <span style={s.sideCount}>{count}x</span>
-                      </div>
-                      <div style={s.sideMeta}>
-                        {station.replace(/_/g, ' ')}
-                        {cookTime > 0 && ` \u00B7 ${cookTime}m cook`}
-                        {` \u00B7 batch of ${batchSize}`}
-                      </div>
-                      {batchesNeeded > 0 && (
-                        <div style={s.sideAction}>
-                          Drop {batchesNeeded} batch{batchesNeeded > 1 ? 'es' : ''}
-                        </div>
-                      )}
-                    </div>
+                  <div style={s.sideImageWrap}>
+                    <img
+                      src={imageUrl}
+                      alt={name}
+                      style={s.sideImage}
+                      onError={(e) => { e.target.style.display = 'none'; }}
+                    />
                   </div>
+                  <div style={s.sideCount}>{count}</div>
+                  <div style={s.sideName}>{name}</div>
+                  {batchesNeeded > 0 && (
+                    <div style={s.sideAction}>
+                      DROP {batchesNeeded} BATCH{batchesNeeded > 1 ? 'ES' : ''}
+                    </div>
+                  )}
                 </div>
               );
             })}
+            </div>
           </div>
 
           {/* Quick Tip */}
@@ -541,71 +530,58 @@ const s = {
     fontFamily: "'Oswald', sans-serif",
   },
   // Side Batching
+  sideGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+    gap: '12px',
+  },
   sideCard: {
     background: BRAND.charcoalLight,
-    borderRadius: '8px',
-    marginBottom: '10px',
-    overflow: 'hidden',
-    borderLeft: `3px solid ${BRAND.gold}`,
-  },
-  sideCardInner: {
-    display: 'flex',
-    alignItems: 'stretch',
+    borderRadius: '12px',
+    padding: '12px',
+    textAlign: 'center',
+    position: 'relative',
   },
   sideImageWrap: {
-    width: '80px',
-    minHeight: '80px',
-    flexShrink: 0,
-    background: BRAND.charcoalDark,
+    width: '100px',
+    height: '100px',
+    margin: '0 auto 6px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden',
   },
   sideImage: {
-    width: '80px',
-    height: '80px',
-    objectFit: 'cover',
-  },
-  sideContent: {
-    flex: 1,
-    padding: '10px 12px',
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-  },
-  sideHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sideName: {
-    fontSize: '1rem',
-    fontWeight: 600,
-    color: BRAND.bone,
-    fontFamily: "'Playfair Display', Georgia, serif",
+    width: '100px',
+    height: '100px',
+    objectFit: 'contain',
+    borderRadius: '50%',
+    filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.5))',
   },
   sideCount: {
-    fontSize: '1.2rem',
+    fontSize: '2.8rem',
     fontWeight: 700,
     color: BRAND.gold,
     fontFamily: "'Oswald', sans-serif",
+    lineHeight: 1,
   },
-  sideMeta: {
-    fontSize: '0.8rem',
-    color: `${BRAND.cream}88`,
+  sideName: {
+    fontSize: '1.1rem',
+    fontWeight: 700,
+    color: BRAND.bone,
+    fontFamily: "'Oswald', sans-serif",
+    letterSpacing: '0.5px',
     marginTop: '2px',
-    fontFamily: "'Open Sans', sans-serif",
-    textTransform: 'capitalize',
+    textTransform: 'uppercase',
   },
   sideAction: {
-    marginTop: '4px',
-    fontSize: '0.85rem',
+    marginTop: '6px',
+    fontSize: '0.8rem',
     fontWeight: 700,
     color: BRAND.terracotta,
     fontFamily: "'Oswald', sans-serif",
     letterSpacing: '1px',
-    textTransform: 'uppercase',
+    padding: '4px 0',
+    borderTop: `1px solid ${BRAND.charcoal}`,
   },
   // Quick Tip
   quickTip: {
