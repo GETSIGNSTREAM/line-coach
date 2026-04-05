@@ -202,7 +202,13 @@ export default function LineCoachDisplay({ storeId }) {
 
               return fireSequence.map((item, i) => {
                 const imageUrl = getSideImageUrl(item.name);
-                const isTakeout = item.diningOption && item.diningOption.toLowerCase() !== 'dine in';
+                const diningColors = {
+                  'dine in': BRAND.green,
+                  'takeout': BRAND.blue,
+                  'delivery': BRAND.terracotta,
+                };
+                const diningLabel = item.diningOption || '';
+                const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
 
                 return (
                   <div key={i} style={{
@@ -249,14 +255,15 @@ export default function LineCoachDisplay({ storeId }) {
                             borderRadius: '3px',
                           }}>RUSH</span>
                         )}
-                        {isTakeout && (
+                        {diningLabel && (
                           <span style={{
                             fontSize: '0.7em',
-                            background: BRAND.blue,
+                            background: diningColor,
                             color: BRAND.white,
-                            padding: '1px 6px',
+                            padding: '1px 8px',
                             borderRadius: '3px',
-                          }}>{item.diningOption.toUpperCase()}</span>
+                            fontWeight: 700,
+                          }}>{diningLabel.toUpperCase()}</span>
                         )}
                       </div>
                       <div style={{
