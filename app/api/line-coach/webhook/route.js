@@ -51,6 +51,12 @@ export async function POST(request) {
       }
     }
 
+    // Determine dining option (dine-in, takeout, delivery)
+    const diningOption = toastOrder.diningOption
+      || toastOrder.serviceType
+      || toastOrder.revenueCenter?.name
+      || null;
+
     const order = {
       store_id: storeId,
       toast_order_id: toastOrder.guid || toastOrder.id || null,
@@ -60,6 +66,7 @@ export async function POST(request) {
       priority: toastOrder.priority === 'RUSH' ? 'rush' : 'normal',
       fire_at: new Date().toISOString(),
       notes: toastOrder.specialInstructions || toastOrder.notes || null,
+      dining_option: diningOption,
     };
 
     const { data, error } = await insertOrder(order);
