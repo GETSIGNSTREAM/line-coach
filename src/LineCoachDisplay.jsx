@@ -209,6 +209,11 @@ export default function LineCoachDisplay({ storeId }) {
               return orderSequence.map((order, oi) => {
                 const diningLabel = order.diningOption || '';
                 const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
+                const sidesText = order.sides.map((side) => {
+                  const sn = typeof side === 'string' ? side : side.name;
+                  const sq = side.quantity || 1;
+                  return sq > 1 ? `${sq}x ${sn}` : sn;
+                }).join(', ');
 
                 return (
                   <div key={oi} style={{
@@ -220,69 +225,7 @@ export default function LineCoachDisplay({ storeId }) {
                     borderLeft: order.priority === 'rush' ? `4px solid ${BRAND.red}` : `4px solid ${BRAND.charcoalLight}`,
                     borderBottom: `1px solid ${BRAND.charcoalLight}`,
                   }}>
-                    {/* Order header: number + badges */}
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      marginBottom: '2px',
-                    }}>
-                      <span style={{
-                        fontSize: `clamp(0.7rem, ${metaSize}, 1rem)`,
-                        fontWeight: 700,
-                        color: BRAND.cream,
-                        fontFamily: "'Oswald', sans-serif",
-                        letterSpacing: '1px',
-                      }}>#{order.orderNum}</span>
-                      {order.priority === 'rush' && (
-                        <span style={{
-                          fontSize: `clamp(0.6rem, ${metaSize}, 0.85rem)`,
-                          background: BRAND.red,
-                          color: BRAND.white,
-                          padding: '1px 6px',
-                          borderRadius: '3px',
-                          fontFamily: "'Oswald', sans-serif",
-                          fontWeight: 700,
-                        }}>RUSH</span>
-                      )}
-                      {diningLabel && (
-                        <span style={{
-                          fontSize: `clamp(0.6rem, ${metaSize}, 0.85rem)`,
-                          background: diningColor,
-                          color: BRAND.white,
-                          padding: '1px 8px',
-                          borderRadius: '3px',
-                          fontFamily: "'Oswald', sans-serif",
-                          fontWeight: 700,
-                        }}>{diningLabel.toUpperCase()}</span>
-                      )}
-                      {/* Sides + notes inline in header row */}
-                      {order.sides.length > 0 && (
-                        <span style={{
-                          fontSize: `clamp(0.6rem, ${sideTextSize}, 0.85rem)`,
-                          color: `${BRAND.cream}99`,
-                          fontFamily: "'Open Sans', sans-serif",
-                        }}>
-                          {order.sides.map((side) => {
-                            const sn = typeof side === 'string' ? side : side.name;
-                            const sq = side.quantity || 1;
-                            return sq > 1 ? `${sq}x ${sn}` : sn;
-                          }).join(' · ')}
-                        </span>
-                      )}
-                      {order.notes && (
-                        <span style={{
-                          fontSize: `clamp(0.6rem, ${sideTextSize}, 0.85rem)`,
-                          color: BRAND.gold,
-                          fontFamily: "'Open Sans', sans-serif",
-                          fontWeight: 600,
-                        }}>
-                          ⚠ {order.notes}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Entrees — image, qty inline with name */}
+                    {/* Entrees — image, qty + name + sides + notes all together */}
                     {order.items.map((item, ii) => (
                       <div key={ii} style={{
                         display: 'flex',
@@ -302,27 +245,83 @@ export default function LineCoachDisplay({ storeId }) {
                           }}
                           onError={(e) => { e.target.style.display = 'none'; }}
                         />
-                        <div style={{
-                          fontSize: `clamp(1.2rem, ${nameSize}, 2.5rem)`,
-                          fontWeight: 700,
-                          color: BRAND.bone,
-                          fontFamily: "'Oswald', sans-serif",
-                          textTransform: 'uppercase',
-                          lineHeight: 1.2,
-                          flex: 1,
-                        }}>
-                          {item.quantity > 1 && (
-                            <span style={{ color: BRAND.gold, marginRight: '6px' }}>{item.quantity}x</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {/* Name + qty + badges */}
+                          <div style={{
+                            fontSize: `clamp(1.2rem, ${nameSize}, 2.5rem)`,
+                            fontWeight: 700,
+                            color: BRAND.bone,
+                            fontFamily: "'Oswald', sans-serif",
+                            textTransform: 'uppercase',
+                            lineHeight: 1.2,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            flexWrap: 'wrap',
+                          }}>
+                            {item.quantity > 1 && (
+                              <span style={{ color: BRAND.gold }}>{item.quantity}x</span>
+                            )}
+                            {item.name}
+                            {/* Show badges only on first item of order */}
+                            {ii === 0 && (
+                              <>
+                                <span style={{
+                                  fontSize: '0.55em',
+                                  color: BRAND.cream,
+                                  fontWeight: 400,
+                                  fontFamily: "'Open Sans', sans-serif",
+                                }}>#{order.orderNum}</span>
+                                {order.priority === 'rush' && (
+                                  <span style={{
+                                    fontSize: '0.55em',
+                                    background: BRAND.red,
+                                    color: BRAND.white,
+                                    padding: '1px 6px',
+                                    borderRadius: '3px',
+                                  }}>RUSH</span>
+                                )}
+                                {diningLabel && (
+                                  <span style={{
+                                    fontSize: '0.55em',
+                                    background: diningColor,
+                                    color: BRAND.white,
+                                    padding: '1px 6px',
+                                    borderRadius: '3px',
+                                  }}>{diningLabel.toUpperCase()}</span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                          {/* Sides + notes under entree name */}
+                          {ii === order.items.length - 1 && (sidesText || order.notes) && (
+                            <div style={{
+                              fontSize: `clamp(0.7rem, ${sideTextSize}, 1rem)`,
+                              lineHeight: 1.3,
+                              marginTop: '1px',
+                            }}>
+                              {sidesText && (
+                                <span style={{ color: BRAND.cream }}>
+                                  w/ {sidesText}
+                                </span>
+                              )}
+                              {order.notes && (
+                                <span style={{
+                                  color: BRAND.gold,
+                                  fontWeight: 600,
+                                  marginLeft: sidesText ? '8px' : 0,
+                                }}>
+                                  ⚠ {order.notes}
+                                </span>
+                              )}
+                            </div>
                           )}
-                          {item.name}
                           {item.modifiers?.length > 0 && (
-                            <span style={{
-                              fontSize: '0.6em',
+                            <div style={{
+                              fontSize: `clamp(0.6rem, ${sideTextSize}, 0.9rem)`,
                               color: `${BRAND.cream}88`,
-                              fontWeight: 400,
                               fontStyle: 'italic',
-                              marginLeft: '8px',
-                            }}>{item.modifiers.join(', ')}</span>
+                            }}>{item.modifiers.join(', ')}</div>
                           )}
                         </div>
                       </div>
