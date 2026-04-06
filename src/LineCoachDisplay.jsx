@@ -131,33 +131,33 @@ export default function LineCoachDisplay({ storeId }) {
       });
   }
 
-  // Fire Sequencing: all items sorted by cook time, with order context
-  function getFireSequence() {
-    const itemTimes = [];
-    for (const order of orders) {
-      for (const item of order.items || []) {
+  // Fire Sequencing: group by order, sorted by priority then longest cook time
+  function getOrderSequence() {
+    const orderList = orders.map((order) => {
+      let maxCookTime = 0;
+      const items = (order.items || []).map((item) => {
         const menuMatch = menuItems.find((m) => m.name === item.name);
         const cookTime = menuMatch?.cook_time || 0;
-        itemTimes.push({
-          name: item.name,
-          cookTime,
-          orderNum: order.order_number || '—',
-          quantity: item.quantity || 1,
-          station: menuMatch?.station || 'line',
-          notes: order.notes || null,
-          diningOption: order.dining_option || null,
-          priority: order.priority || 'normal',
-          modifiers: item.modifiers || [],
-        });
-      }
-    }
-    // Sort longest cook time first, then by priority
-    itemTimes.sort((a, b) => {
+        if (cookTime > maxCookTime) maxCookTime = cookTime;
+        return { ...item, cookTime, station: menuMatch?.station || 'line' };
+      });
+      return {
+        orderNum: order.order_number || '—',
+        items,
+        sides: order.sides || [],
+        notes: order.notes || null,
+        diningOption: order.dining_option || null,
+        priority: order.priority || 'normal',
+        maxCookTime,
+      };
+    });
+    // Rush first, then longest cook time
+    orderList.sort((a, b) => {
       if (a.priority === 'rush' && b.priority !== 'rush') return -1;
       if (b.priority === 'rush' && a.priority !== 'rush') return 1;
-      return b.cookTime - a.cookTime;
+      return b.maxCookTime - a.maxCookTime;
     });
-    return itemTimes;
+    return orderList;
   }
 
 
@@ -179,124 +179,172 @@ export default function LineCoachDisplay({ storeId }) {
   // ── Active Orders View ──────────────────────────────
 
   const batchedSides = getBatchedSides();
-  const fireSequence = getFireSequence();
+  const orderSequence = getOrderSequence();
 
   return (
     <div style={s.container}>
       <Header now={now} orderCount={orders.length} />
 
       <div style={s.mainGrid}>
-        {/* Left Column: Fire Order */}
+        {/* Left Column: Fire Order — grouped by order */}
         <div style={s.leftCol}>
           <div style={s.sidesPanelHeader}>FIRE ORDER</div>
           <div style={s.sidesContainer}>
-            {fireSequence.length === 0 && (
+            {orderSequence.length === 0 && (
               <div style={s.emptyState}>All orders plated</div>
             )}
             {(() => {
-              const n = fireSequence.length;
-              const imgSize = n <= 3 ? '12vh' : n <= 6 ? '9vh' : '7vh';
-              const nameSize = n <= 3 ? '2.2vh' : n <= 6 ? '1.8vh' : '1.5vh';
-              const countSize = n <= 3 ? '8vh' : n <= 6 ? '6vh' : '4.5vh';
-              const metaSize = n <= 3 ? '1.4vh' : n <= 6 ? '1.2vh' : '1vh';
+              const n = orderSequence.length;
+              const imgSize = n <= 3 ? '10vh' : n <= 5 ? '8vh' : '6vh';
+              const nameSize = n <= 3 ? '2vh' : n <= 5 ? '1.7vh' : '1.4vh';
+              const metaSize = n <= 3 ? '1.3vh' : n <= 5 ? '1.1vh' : '0.9vh';
+              const sideTextSize = n <= 3 ? '1.2vh' : n <= 5 ? '1vh' : '0.85vh';
 
-              return fireSequence.map((item, i) => {
-                const imageUrl = getSideImageUrl(item.name);
-                const diningColors = {
-                  'dine in': BRAND.green,
-                  'takeout': BRAND.blue,
-                  'delivery': BRAND.terracotta,
-                };
-                const diningLabel = item.diningOption || '';
+              const diningColors = {
+                'dine in': BRAND.green,
+                'takeout': BRAND.blue,
+                'delivery': BRAND.terracotta,
+              };
+
+              return orderSequence.map((order, oi) => {
+                const diningLabel = order.diningOption || '';
                 const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
 
                 return (
-                  <div key={i} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '3%',
+                  <div key={oi} style={{
                     flex: 1,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
                     padding: '0 2%',
-                    borderLeft: item.priority === 'rush' ? `4px solid ${BRAND.red}` : '4px solid transparent',
+                    borderLeft: order.priority === 'rush' ? `4px solid ${BRAND.red}` : `4px solid ${BRAND.charcoalLight}`,
+                    borderBottom: `1px solid ${BRAND.charcoalLight}`,
                   }}>
-                    <img
-                      src={imageUrl}
-                      alt={item.name}
-                      style={{
-                        width: imgSize,
-                        height: imgSize,
-                        objectFit: 'cover',
-                        borderRadius: '50%',
-                        flexShrink: 0,
-                      }}
-                      onError={(e) => { e.target.style.display = 'none'; }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontSize: `clamp(1rem, ${nameSize}, 2rem)`,
+                    {/* Order header: number + badges */}
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      marginBottom: '2px',
+                    }}>
+                      <span style={{
+                        fontSize: `clamp(0.7rem, ${metaSize}, 1rem)`,
                         fontWeight: 700,
-                        color: BRAND.bone,
+                        color: BRAND.cream,
                         fontFamily: "'Oswald', sans-serif",
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                        lineHeight: 1.2,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        flexWrap: 'wrap',
-                      }}>
-                        {item.name}
-                        {item.priority === 'rush' && (
-                          <span style={{
-                            fontSize: '0.7em',
-                            background: BRAND.red,
-                            color: BRAND.white,
-                            padding: '1px 6px',
-                            borderRadius: '3px',
-                          }}>RUSH</span>
-                        )}
-                        {diningLabel && (
-                          <span style={{
-                            fontSize: '0.7em',
-                            background: diningColor,
-                            color: BRAND.white,
-                            padding: '1px 8px',
-                            borderRadius: '3px',
-                            fontWeight: 700,
-                          }}>{diningLabel.toUpperCase()}</span>
-                        )}
-                      </div>
-                      <div style={{
-                        fontSize: `clamp(0.65rem, ${metaSize}, 1rem)`,
-                        color: `${BRAND.cream}99`,
-                        fontFamily: "'Open Sans', sans-serif",
-                        marginTop: '1px',
-                      }}>
-                        #{item.orderNum}
-                        {item.cookTime > 0 && <span> · {item.cookTime}m cook</span>}
-                        {item.modifiers?.length > 0 && <span> · {item.modifiers.join(', ')}</span>}
-                      </div>
-                      {item.notes && (
-                        <div style={{
-                          fontSize: `clamp(0.65rem, ${metaSize}, 1rem)`,
-                          color: BRAND.gold,
-                          fontFamily: "'Open Sans', sans-serif",
-                          fontWeight: 600,
-                          marginTop: '1px',
-                        }}>
-                          ⚠ {item.notes}
-                        </div>
+                        letterSpacing: '1px',
+                      }}>#{order.orderNum}</span>
+                      {order.priority === 'rush' && (
+                        <span style={{
+                          fontSize: `clamp(0.6rem, ${metaSize}, 0.85rem)`,
+                          background: BRAND.red,
+                          color: BRAND.white,
+                          padding: '1px 6px',
+                          borderRadius: '3px',
+                          fontFamily: "'Oswald', sans-serif",
+                          fontWeight: 700,
+                        }}>RUSH</span>
+                      )}
+                      {diningLabel && (
+                        <span style={{
+                          fontSize: `clamp(0.6rem, ${metaSize}, 0.85rem)`,
+                          background: diningColor,
+                          color: BRAND.white,
+                          padding: '1px 8px',
+                          borderRadius: '3px',
+                          fontFamily: "'Oswald', sans-serif",
+                          fontWeight: 700,
+                        }}>{diningLabel.toUpperCase()}</span>
                       )}
                     </div>
-                    <div style={{
-                      fontSize: `clamp(2rem, ${countSize}, 6rem)`,
-                      fontWeight: 700,
-                      color: BRAND.gold,
-                      fontFamily: "'Oswald', sans-serif",
-                      lineHeight: 1,
-                      flexShrink: 0,
-                      textAlign: 'right',
-                    }}>{item.quantity}</div>
+
+                    {/* Entrees */}
+                    {order.items.map((item, ii) => (
+                      <div key={ii} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '3%',
+                        padding: '2px 0',
+                      }}>
+                        <img
+                          src={getSideImageUrl(item.name)}
+                          alt={item.name}
+                          style={{
+                            width: imgSize,
+                            height: imgSize,
+                            objectFit: 'cover',
+                            borderRadius: '50%',
+                            flexShrink: 0,
+                          }}
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontSize: `clamp(1rem, ${nameSize}, 2rem)`,
+                            fontWeight: 700,
+                            color: BRAND.bone,
+                            fontFamily: "'Oswald', sans-serif",
+                            textTransform: 'uppercase',
+                            lineHeight: 1.2,
+                          }}>{item.name}</div>
+                          {item.modifiers?.length > 0 && (
+                            <div style={{
+                              fontSize: `clamp(0.6rem, ${sideTextSize}, 0.9rem)`,
+                              color: `${BRAND.cream}88`,
+                              fontStyle: 'italic',
+                            }}>{item.modifiers.join(', ')}</div>
+                          )}
+                        </div>
+                        <div style={{
+                          fontSize: `clamp(1.8rem, ${n <= 3 ? '6vh' : n <= 5 ? '4.5vh' : '3.5vh'}, 5rem)`,
+                          fontWeight: 700,
+                          color: BRAND.gold,
+                          fontFamily: "'Oswald', sans-serif",
+                          lineHeight: 1,
+                          flexShrink: 0,
+                          textAlign: 'right',
+                        }}>{item.quantity}</div>
+                      </div>
+                    ))}
+
+                    {/* Sides included with order */}
+                    {order.sides.length > 0 && (
+                      <div style={{
+                        display: 'flex',
+                        gap: '12px',
+                        flexWrap: 'wrap',
+                        padding: '2px 0 0',
+                        marginLeft: `calc(${imgSize} + 3%)`,
+                      }}>
+                        {order.sides.map((side, si) => {
+                          const sideName = typeof side === 'string' ? side : side.name;
+                          const sideQty = side.quantity || 1;
+                          return (
+                            <span key={si} style={{
+                              fontSize: `clamp(0.65rem, ${sideTextSize}, 0.9rem)`,
+                              color: BRAND.cream,
+                              fontFamily: "'Open Sans', sans-serif",
+                            }}>
+                              + {sideQty > 1 ? `${sideQty}x ` : ''}{sideName}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Special instructions */}
+                    {order.notes && (
+                      <div style={{
+                        fontSize: `clamp(0.65rem, ${sideTextSize}, 0.9rem)`,
+                        color: BRAND.gold,
+                        fontFamily: "'Open Sans', sans-serif",
+                        fontWeight: 600,
+                        marginLeft: `calc(${imgSize} + 3%)`,
+                        padding: '2px 0',
+                      }}>
+                        ⚠ {order.notes}
+                      </div>
+                    )}
                   </div>
                 );
               });
