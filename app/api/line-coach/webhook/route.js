@@ -57,10 +57,24 @@ export async function POST(request) {
       || toastOrder.revenueCenter?.name
       || null;
 
+    // Customer name from Toast
+    const customerName = toastOrder.customer?.firstName
+      || toastOrder.customer?.name
+      || toastOrder.guestName
+      || toastOrder.customerName
+      || null;
+
+    // Check number
+    const checkNumber = toastOrder.checkNumber
+      || toastOrder.displayNumber
+      || toastOrder.orderNumber
+      || null;
+
     const order = {
       store_id: storeId,
       toast_order_id: toastOrder.guid || toastOrder.id || null,
-      order_number: toastOrder.displayNumber || toastOrder.orderNumber || null,
+      order_number: checkNumber,
+      customer_name: customerName,
       items: mains,
       sides: sides,
       priority: toastOrder.priority === 'RUSH' ? 'rush' : 'normal',
