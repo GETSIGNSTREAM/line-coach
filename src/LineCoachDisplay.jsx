@@ -209,6 +209,11 @@ export default function LineCoachDisplay({ storeId }) {
               return orderSequence.map((order, oi) => {
                 const diningLabel = order.diningOption || '';
                 const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
+                const sidesText = order.sides.map((side) => {
+                  const sn = typeof side === 'string' ? side : side.name;
+                  const sq = side.quantity || 1;
+                  return sq > 1 ? `${sq}x ${sn}` : sn;
+                }).join(', ');
 
                 return (
                   <div key={oi} style={{
@@ -220,51 +225,13 @@ export default function LineCoachDisplay({ storeId }) {
                     borderLeft: order.priority === 'rush' ? `4px solid ${BRAND.red}` : `4px solid ${BRAND.charcoalLight}`,
                     borderBottom: `1px solid ${BRAND.charcoalLight}`,
                   }}>
-                    {/* Order header: number + badges */}
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      marginBottom: '2px',
-                    }}>
-                      <span style={{
-                        fontSize: `clamp(0.7rem, ${metaSize}, 1rem)`,
-                        fontWeight: 700,
-                        color: BRAND.cream,
-                        fontFamily: "'Oswald', sans-serif",
-                        letterSpacing: '1px',
-                      }}>#{order.orderNum}</span>
-                      {order.priority === 'rush' && (
-                        <span style={{
-                          fontSize: `clamp(0.6rem, ${metaSize}, 0.85rem)`,
-                          background: BRAND.red,
-                          color: BRAND.white,
-                          padding: '1px 6px',
-                          borderRadius: '3px',
-                          fontFamily: "'Oswald', sans-serif",
-                          fontWeight: 700,
-                        }}>RUSH</span>
-                      )}
-                      {diningLabel && (
-                        <span style={{
-                          fontSize: `clamp(0.6rem, ${metaSize}, 0.85rem)`,
-                          background: diningColor,
-                          color: BRAND.white,
-                          padding: '1px 8px',
-                          borderRadius: '3px',
-                          fontFamily: "'Oswald', sans-serif",
-                          fontWeight: 700,
-                        }}>{diningLabel.toUpperCase()}</span>
-                      )}
-                    </div>
-
-                    {/* Entrees */}
+                    {/* Entrees — image, qty + name + sides + notes all together */}
                     {order.items.map((item, ii) => (
                       <div key={ii} style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: '3%',
-                        padding: '2px 0',
+                        padding: '1px 0',
                       }}>
                         <img
                           src={getSideImageUrl(item.name)}
@@ -279,14 +246,76 @@ export default function LineCoachDisplay({ storeId }) {
                           onError={(e) => { e.target.style.display = 'none'; }}
                         />
                         <div style={{ flex: 1, minWidth: 0 }}>
+                          {/* Name + qty + badges */}
                           <div style={{
-                            fontSize: `clamp(1rem, ${nameSize}, 2rem)`,
+                            fontSize: `clamp(1.2rem, ${nameSize}, 2.5rem)`,
                             fontWeight: 700,
                             color: BRAND.bone,
                             fontFamily: "'Oswald', sans-serif",
                             textTransform: 'uppercase',
                             lineHeight: 1.2,
-                          }}>{item.name}</div>
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            flexWrap: 'wrap',
+                          }}>
+                            {item.quantity > 1 && (
+                              <span style={{ color: BRAND.gold }}>{item.quantity}x</span>
+                            )}
+                            {item.name}
+                            {/* Show badges only on first item of order */}
+                            {ii === 0 && (
+                              <>
+                                <span style={{
+                                  fontSize: '0.55em',
+                                  color: BRAND.cream,
+                                  fontWeight: 400,
+                                  fontFamily: "'Open Sans', sans-serif",
+                                }}>#{order.orderNum}</span>
+                                {order.priority === 'rush' && (
+                                  <span style={{
+                                    fontSize: '0.55em',
+                                    background: BRAND.red,
+                                    color: BRAND.white,
+                                    padding: '1px 6px',
+                                    borderRadius: '3px',
+                                  }}>RUSH</span>
+                                )}
+                                {diningLabel && (
+                                  <span style={{
+                                    fontSize: '0.55em',
+                                    background: diningColor,
+                                    color: BRAND.white,
+                                    padding: '1px 6px',
+                                    borderRadius: '3px',
+                                  }}>{diningLabel.toUpperCase()}</span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                          {/* Sides + notes under entree name */}
+                          {ii === order.items.length - 1 && (sidesText || order.notes) && (
+                            <div style={{
+                              fontSize: `clamp(0.7rem, ${sideTextSize}, 1rem)`,
+                              lineHeight: 1.3,
+                              marginTop: '1px',
+                            }}>
+                              {sidesText && (
+                                <span style={{ color: BRAND.cream }}>
+                                  w/ {sidesText}
+                                </span>
+                              )}
+                              {order.notes && (
+                                <span style={{
+                                  color: BRAND.gold,
+                                  fontWeight: 600,
+                                  marginLeft: sidesText ? '8px' : 0,
+                                }}>
+                                  ⚠ {order.notes}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {item.modifiers?.length > 0 && (
                             <div style={{
                               fontSize: `clamp(0.6rem, ${sideTextSize}, 0.9rem)`,
@@ -295,56 +324,8 @@ export default function LineCoachDisplay({ storeId }) {
                             }}>{item.modifiers.join(', ')}</div>
                           )}
                         </div>
-                        <div style={{
-                          fontSize: `clamp(1.8rem, ${n <= 3 ? '6vh' : n <= 5 ? '4.5vh' : '3.5vh'}, 5rem)`,
-                          fontWeight: 700,
-                          color: BRAND.gold,
-                          fontFamily: "'Oswald', sans-serif",
-                          lineHeight: 1,
-                          flexShrink: 0,
-                          textAlign: 'right',
-                        }}>{item.quantity}</div>
                       </div>
                     ))}
-
-                    {/* Sides included with order */}
-                    {order.sides.length > 0 && (
-                      <div style={{
-                        display: 'flex',
-                        gap: '12px',
-                        flexWrap: 'wrap',
-                        padding: '2px 0 0',
-                        marginLeft: `calc(${imgSize} + 3%)`,
-                      }}>
-                        {order.sides.map((side, si) => {
-                          const sideName = typeof side === 'string' ? side : side.name;
-                          const sideQty = side.quantity || 1;
-                          return (
-                            <span key={si} style={{
-                              fontSize: `clamp(0.65rem, ${sideTextSize}, 0.9rem)`,
-                              color: BRAND.cream,
-                              fontFamily: "'Open Sans', sans-serif",
-                            }}>
-                              + {sideQty > 1 ? `${sideQty}x ` : ''}{sideName}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Special instructions */}
-                    {order.notes && (
-                      <div style={{
-                        fontSize: `clamp(0.65rem, ${sideTextSize}, 0.9rem)`,
-                        color: BRAND.gold,
-                        fontFamily: "'Open Sans', sans-serif",
-                        fontWeight: 600,
-                        marginLeft: `calc(${imgSize} + 3%)`,
-                        padding: '2px 0',
-                      }}>
-                        ⚠ {order.notes}
-                      </div>
-                    )}
                   </div>
                 );
               });
@@ -513,7 +494,7 @@ const s = {
   // Main Layout
   mainGrid: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
+    gridTemplateColumns: '3fr 2fr',
     gap: '12px',
     padding: '12px',
     minHeight: 'calc(100vh - 60px)',
