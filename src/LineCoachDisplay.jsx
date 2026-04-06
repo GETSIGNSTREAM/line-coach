@@ -256,15 +256,39 @@ export default function LineCoachDisplay({ storeId }) {
                           fontWeight: 700,
                         }}>{diningLabel.toUpperCase()}</span>
                       )}
+                      {/* Sides + notes inline in header row */}
+                      {order.sides.length > 0 && (
+                        <span style={{
+                          fontSize: `clamp(0.6rem, ${sideTextSize}, 0.85rem)`,
+                          color: `${BRAND.cream}99`,
+                          fontFamily: "'Open Sans', sans-serif",
+                        }}>
+                          {order.sides.map((side) => {
+                            const sn = typeof side === 'string' ? side : side.name;
+                            const sq = side.quantity || 1;
+                            return sq > 1 ? `${sq}x ${sn}` : sn;
+                          }).join(' · ')}
+                        </span>
+                      )}
+                      {order.notes && (
+                        <span style={{
+                          fontSize: `clamp(0.6rem, ${sideTextSize}, 0.85rem)`,
+                          color: BRAND.gold,
+                          fontFamily: "'Open Sans', sans-serif",
+                          fontWeight: 600,
+                        }}>
+                          ⚠ {order.notes}
+                        </span>
+                      )}
                     </div>
 
-                    {/* Entrees */}
+                    {/* Entrees — image, qty inline with name */}
                     {order.items.map((item, ii) => (
                       <div key={ii} style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: '3%',
-                        padding: '2px 0',
+                        padding: '1px 0',
                       }}>
                         <img
                           src={getSideImageUrl(item.name)}
@@ -278,73 +302,31 @@ export default function LineCoachDisplay({ storeId }) {
                           }}
                           onError={(e) => { e.target.style.display = 'none'; }}
                         />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{
-                            fontSize: `clamp(1rem, ${nameSize}, 2rem)`,
-                            fontWeight: 700,
-                            color: BRAND.bone,
-                            fontFamily: "'Oswald', sans-serif",
-                            textTransform: 'uppercase',
-                            lineHeight: 1.2,
-                          }}>{item.name}</div>
+                        <div style={{
+                          fontSize: `clamp(1.2rem, ${nameSize}, 2.5rem)`,
+                          fontWeight: 700,
+                          color: BRAND.bone,
+                          fontFamily: "'Oswald', sans-serif",
+                          textTransform: 'uppercase',
+                          lineHeight: 1.2,
+                          flex: 1,
+                        }}>
+                          {item.quantity > 1 && (
+                            <span style={{ color: BRAND.gold, marginRight: '6px' }}>{item.quantity}x</span>
+                          )}
+                          {item.name}
                           {item.modifiers?.length > 0 && (
-                            <div style={{
-                              fontSize: `clamp(0.6rem, ${sideTextSize}, 0.9rem)`,
+                            <span style={{
+                              fontSize: '0.6em',
                               color: `${BRAND.cream}88`,
+                              fontWeight: 400,
                               fontStyle: 'italic',
-                            }}>{item.modifiers.join(', ')}</div>
+                              marginLeft: '8px',
+                            }}>{item.modifiers.join(', ')}</span>
                           )}
                         </div>
-                        <div style={{
-                          fontSize: `clamp(1.8rem, ${n <= 3 ? '6vh' : n <= 5 ? '4.5vh' : '3.5vh'}, 5rem)`,
-                          fontWeight: 700,
-                          color: BRAND.gold,
-                          fontFamily: "'Oswald', sans-serif",
-                          lineHeight: 1,
-                          flexShrink: 0,
-                          textAlign: 'right',
-                        }}>{item.quantity}</div>
                       </div>
                     ))}
-
-                    {/* Sides included with order */}
-                    {order.sides.length > 0 && (
-                      <div style={{
-                        display: 'flex',
-                        gap: '12px',
-                        flexWrap: 'wrap',
-                        padding: '2px 0 0',
-                        marginLeft: `calc(${imgSize} + 3%)`,
-                      }}>
-                        {order.sides.map((side, si) => {
-                          const sideName = typeof side === 'string' ? side : side.name;
-                          const sideQty = side.quantity || 1;
-                          return (
-                            <span key={si} style={{
-                              fontSize: `clamp(0.65rem, ${sideTextSize}, 0.9rem)`,
-                              color: BRAND.cream,
-                              fontFamily: "'Open Sans', sans-serif",
-                            }}>
-                              + {sideQty > 1 ? `${sideQty}x ` : ''}{sideName}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Special instructions */}
-                    {order.notes && (
-                      <div style={{
-                        fontSize: `clamp(0.65rem, ${sideTextSize}, 0.9rem)`,
-                        color: BRAND.gold,
-                        fontFamily: "'Open Sans', sans-serif",
-                        fontWeight: 600,
-                        marginLeft: `calc(${imgSize} + 3%)`,
-                        padding: '2px 0',
-                      }}>
-                        ⚠ {order.notes}
-                      </div>
-                    )}
                   </div>
                 );
               });
@@ -513,7 +495,7 @@ const s = {
   // Main Layout
   mainGrid: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
+    gridTemplateColumns: '3fr 2fr',
     gap: '12px',
     padding: '12px',
     minHeight: 'calc(100vh - 60px)',
