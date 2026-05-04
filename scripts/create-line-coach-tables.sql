@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS lc_orders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   bumped_at TIMESTAMPTZ,
   notes TEXT,
-  dining_option TEXT
+  dining_option TEXT,
+  customer_name TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_lc_orders_store_status ON lc_orders (store_id, status);

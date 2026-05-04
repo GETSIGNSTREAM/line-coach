@@ -143,6 +143,7 @@ export default function LineCoachDisplay({ storeId }) {
       });
       return {
         orderNum: order.order_number || '—',
+        customerName: order.customer_name || null,
         items,
         sides: order.sides || [],
         notes: order.notes || null,
@@ -271,7 +272,7 @@ export default function LineCoachDisplay({ storeId }) {
                                   color: BRAND.cream,
                                   fontWeight: 400,
                                   fontFamily: "'Open Sans', sans-serif",
-                                }}>#{order.orderNum}</span>
+                                }}>Check #{order.orderNum}{order.customerName ? ` — ${order.customerName}` : ''}</span>
                                 {order.priority === 'rush' && (
                                   <span style={{
                                     fontSize: '0.55em',
