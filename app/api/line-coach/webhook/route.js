@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createHmac } from 'crypto';
 import { insertOrder, resolveStoreId } from '@/lib/line-coach';
+import { getServiceClient } from '@/lib/supabase';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
@@ -12,7 +13,6 @@ function tryVerifySignature(rawBody, request, secret) {
 
   if (!sig || !secret) return { verified: false, method: 'no-signature' };
 
-  // Try multiple concatenation orders
   const attempts = [
     { label: 'body+ts', payload: rawBody + ts },
     { label: 'ts+body', payload: ts + rawBody },
@@ -21,17 +21,12 @@ function tryVerifySignature(rawBody, request, secret) {
 
   for (const attempt of attempts) {
     const computed = createHmac('sha256', secret).update(attempt.payload).digest('base64');
-    if (computed === sig) {
-      return { verified: true, method: attempt.label };
-    }
+    if (computed === sig) return { verified: true, method: attempt.label };
   }
 
-  // Also try hex encoding
   for (const attempt of attempts) {
     const computed = createHmac('sha256', secret).update(attempt.payload).digest('hex');
-    if (computed === sig) {
-      return { verified: true, method: attempt.label + '-hex' };
-    }
+    if (computed === sig) return { verified: true, method: attempt.label + '-hex' };
   }
 
   return { verified: false, method: 'hmac-mismatch' };
@@ -45,10 +40,10 @@ export async function POST(request) {
 
   const rawBody = await request.text();
 
-  // Collect all headers for diagnosis
+  // Collect headers
   const headerMap = {};
   for (const [key, value] of request.headers.entries()) {
-    headerMap[key] = key.toLowerCase().includes('secret') ? '***' : value;
+    headerMap[key] = value;
   }
 
   const toastSig = request.headers.get('toast-signature');
@@ -67,18 +62,23 @@ export async function POST(request) {
   }
 
   if (!authenticated) {
-    // Log ALL headers so we can see exactly what Toast sends
-    console.error('WEBHOOK_AUTH_FAIL', JSON.stringify({
-      authMethod,
-      headers: headerMap,
-      bodyPreview: rawBody.slice(0, 200),
-      secretConfigured: !!TOAST_WEBHOOK_SECRET,
-      secretPreview: TOAST_WEBHOOK_SECRET ? TOAST_WEBHOOK_SECRET.slice(0, 8) + '...' : 'MISSING',
-    }));
+    // TEMP DEBUG: Write debug data to Supabase so we can read it via API
+    try {
+      const db = getServiceClient();
+      await db.from('lc_orders').insert({
+        store_id: 'debug',
+        order_number: 'WEBHOOK-DEBUG',
+        status: 'cancelled',
+        items: [{ debug: true, authMethod, headers: headerMap }],
+        sides: [{ bodyPreview: rawBody.slice(0, 500), bodyLength: rawBody.length }],
+        notes: `secret=${TOAST_WEBHOOK_SECRET ? TOAST_WEBHOOK_SECRET.slice(0, 8) + '...' : 'MISSING'} | sig=${toastSig || 'none'} | ts=${request.headers.get('toast-timestamp') || 'none'}`,
+      });
+    } catch (e) {
+      console.error('Debug insert failed', e);
+    }
+
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
-  console.log('WEBHOOK_AUTH_OK', authMethod);
 
   try {
     const body = JSON.parse(rawBody);
