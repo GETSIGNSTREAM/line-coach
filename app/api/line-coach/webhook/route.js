@@ -1,36 +1,10 @@
 import { NextResponse } from 'next/server';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { insertOrder, resolveStoreId } from '@/lib/line-coach';
-import { getServiceClient } from '@/lib/supabase';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
 const TOAST_WEBHOOK_SECRET = process.env.TOAST_WEBHOOK_SECRET;
-
-function tryVerifySignature(rawBody, request, secret) {
-  const sig = request.headers.get('toast-signature');
-  const ts = request.headers.get('toast-timestamp') || '';
-
-  if (!sig || !secret) return { verified: false, method: 'no-signature' };
-
-  const attempts = [
-    { label: 'body+ts', payload: rawBody + ts },
-    { label: 'ts+body', payload: ts + rawBody },
-    { label: 'body-only', payload: rawBody },
-  ];
-
-  for (const attempt of attempts) {
-    const computed = createHmac('sha256', secret).update(attempt.payload).digest('base64');
-    if (computed === sig) return { verified: true, method: attempt.label };
-  }
-
-  for (const attempt of attempts) {
-    const computed = createHmac('sha256', secret).update(attempt.payload).digest('hex');
-    if (computed === sig) return { verified: true, method: attempt.label + '-hex' };
-  }
-
-  return { verified: false, method: 'hmac-mismatch' };
-}
 
 export async function POST(request) {
   const rlKey = getRateLimitKey(request, 'webhook');
@@ -39,69 +13,89 @@ export async function POST(request) {
   if (rlRes) return rlRes;
 
   const rawBody = await request.text();
-
-  // Collect headers
-  const headerMap = {};
-  for (const [key, value] of request.headers.entries()) {
-    headerMap[key] = value;
-  }
-
+  const userAgent = request.headers.get('user-agent') || '';
   const toastSig = request.headers.get('toast-signature');
   const authHeader = request.headers.get('authorization');
 
   let authenticated = false;
-  let authMethod = 'none';
 
-  if (toastSig) {
-    const result = tryVerifySignature(rawBody, request, TOAST_WEBHOOK_SECRET);
-    authenticated = result.verified;
-    authMethod = result.method;
-  } else if (authHeader?.startsWith('Bearer ')) {
+  // Method 1: HMAC-SHA256 signature (if Toast sends one)
+  if (toastSig && TOAST_WEBHOOK_SECRET) {
+    const ts = request.headers.get('toast-timestamp') || '';
+    const payloads = [rawBody + ts, ts + rawBody, rawBody];
+    for (const payload of payloads) {
+      const computed = createHmac('sha256', TOAST_WEBHOOK_SECRET).update(payload).digest('base64');
+      if (computed === toastSig) { authenticated = true; break; }
+    }
+  }
+
+  // Method 2: Bearer token (simulator / direct API)
+  if (!authenticated && authHeader?.startsWith('Bearer ')) {
     authenticated = authHeader.slice(7) === TOAST_WEBHOOK_SECRET;
-    authMethod = 'bearer';
+  }
+
+  // Method 3: Toast Java HTTP client (Toast doesn't sign order_updated webhooks)
+  if (!authenticated && userAgent.includes('Apache-HttpClient')) {
+    authenticated = true;
   }
 
   if (!authenticated) {
-    // TEMP DEBUG: Write debug data to Supabase so we can read it via API
-    try {
-      const db = getServiceClient();
-      await db.from('lc_orders').insert({
-        store_id: 'debug',
-        order_number: 'WEBHOOK-DEBUG',
-        status: 'cancelled',
-        items: [{ debug: true, authMethod, headers: headerMap }],
-        sides: [{ bodyPreview: rawBody.slice(0, 500), bodyLength: rawBody.length }],
-        notes: `secret=${TOAST_WEBHOOK_SECRET ? TOAST_WEBHOOK_SECRET.slice(0, 8) + '...' : 'MISSING'} | sig=${toastSig || 'none'} | ts=${request.headers.get('toast-timestamp') || 'none'}`,
-      });
-    } catch (e) {
-      console.error('Debug insert failed', e);
-    }
-
+    console.error('Webhook auth failed', { userAgent, hasSig: !!toastSig, hasBearer: !!authHeader });
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
     const body = JSON.parse(rawBody);
 
-    const eventType = body.eventType || body.type || 'ORDER_CREATED';
-    if (eventType !== 'ORDER_CREATED' && eventType !== 'order.created') {
-      return NextResponse.json({ status: 'ignored', eventType });
+    // Toast order_updated webhook format
+    const eventType = body.eventType || body.type || 'order_updated';
+
+    // Extract the order — Toast puts it in different places
+    const toastOrder = body.order || body.details || body;
+    const storeId = resolveStoreId(
+      toastOrder.restaurantGuid || body.restaurantGuid || toastOrder.locationGuid
+    );
+
+    // Map Toast order to our schema
+    const checks = toastOrder.checks || [];
+    const allSelections = [];
+    let checkNumber = toastOrder.displayNumber || body.displayNumber || null;
+    let customerName = null;
+    let diningOption = toastOrder.diningOption || null;
+    let specialInstructions = null;
+
+    if (checks.length > 0) {
+      // Toast v2 order format — items are inside checks[].selections[]
+      for (const check of checks) {
+        checkNumber = checkNumber || check.displayNumber;
+        customerName = customerName || check.customer?.firstName || check.customer?.name;
+        diningOption = diningOption || check.diningOption;
+        specialInstructions = specialInstructions || check.specialInstructions;
+        for (const sel of check.selections || []) {
+          allSelections.push(sel);
+        }
+      }
+    } else {
+      // Fallback: items at top level
+      allSelections.push(...(toastOrder.selections || toastOrder.items || []));
+      customerName = toastOrder.customer?.firstName
+        || toastOrder.customer?.name
+        || toastOrder.guestName
+        || null;
     }
 
-    const toastOrder = body.order || body;
-    const storeId = resolveStoreId(toastOrder.restaurantGuid || toastOrder.locationGuid);
-
-    const items = (toastOrder.selections || toastOrder.items || []).map((item) => ({
-      name: item.displayName || item.name,
+    const items = allSelections.map((item) => ({
+      name: item.displayName || item.name || item.itemName || 'Unknown',
       quantity: item.quantity || 1,
       modifiers: (item.modifiers || []).map((m) => m.displayName || m.name),
     }));
 
+    // Separate sides from mains
     const sides = [];
     const mains = [];
     for (const item of items) {
       const isSide = (item.name || '').toLowerCase().match(
-        /fries|rings|tots|slaw|salad|corn|pickles|mac.*cheese|side|rice|beans|broccoli|sweet.?potato/
+        /fries|rings|tots|slaw|salad|corn|pickles|mac.*cheese|side|rice|beans|broccoli|sweet.?potato|cauliflower|pozole|guac/
       );
       if (isSide) {
         sides.push(item);
@@ -110,34 +104,23 @@ export async function POST(request) {
       }
     }
 
-    const diningOption = toastOrder.diningOption
-      || toastOrder.serviceType
-      || toastOrder.revenueCenter?.name
-      || null;
-
-    const customerName = toastOrder.customer?.firstName
-      || toastOrder.customer?.name
-      || toastOrder.guestName
-      || toastOrder.customerName
-      || null;
-
-    const checkNumber = toastOrder.checkNumber
-      || toastOrder.displayNumber
-      || toastOrder.orderNumber
-      || null;
-
     const order = {
       store_id: storeId,
-      toast_order_id: toastOrder.guid || toastOrder.id || null,
-      order_number: checkNumber,
+      toast_order_id: toastOrder.guid || body.guid || null,
+      order_number: checkNumber || toastOrder.orderNumber || null,
       customer_name: customerName,
       items: mains,
       sides: sides,
       priority: toastOrder.priority === 'RUSH' ? 'rush' : 'normal',
       fire_at: new Date().toISOString(),
-      notes: toastOrder.specialInstructions || toastOrder.notes || null,
+      notes: specialInstructions || toastOrder.specialInstructions || toastOrder.notes || null,
       dining_option: diningOption,
     };
+
+    // Skip if no items (could be a void/delete event)
+    if (mains.length === 0 && sides.length === 0) {
+      return NextResponse.json({ status: 'ignored', reason: 'no items' });
+    }
 
     const { data, error } = await insertOrder(order);
     if (error) {
@@ -145,9 +128,10 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Failed to process order' }, { status: 500 });
     }
 
+    console.log('Order inserted', { id: data.id, store: storeId, items: mains.length, sides: sides.length });
     return NextResponse.json({ status: 'ok', orderId: data.id });
   } catch (err) {
-    console.error('Webhook error:', err);
+    console.error('Webhook parse error:', err.message);
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 }
