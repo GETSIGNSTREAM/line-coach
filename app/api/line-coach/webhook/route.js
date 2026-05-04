@@ -1,25 +1,64 @@
 import { NextResponse } from 'next/server';
+import { createHmac } from 'crypto';
 import { insertOrder, resolveStoreId } from '@/lib/line-coach';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
 const TOAST_WEBHOOK_SECRET = process.env.TOAST_WEBHOOK_SECRET;
 
+function verifyToastSignature(rawBody, signature, timestamp, secret) {
+  if (!signature || !secret) return false;
+  const payload = rawBody + timestamp;
+  const computed = createHmac('sha256', secret).update(payload).digest('base64');
+  return computed === signature;
+}
+
 export async function POST(request) {
-  // Rate limit
   const rlKey = getRateLimitKey(request, 'webhook');
   const rl = checkRateLimit(rlKey, RATE_LIMITS.webhook.limit, RATE_LIMITS.webhook.windowMs);
   const rlRes = rateLimitResponse(rl);
   if (rlRes) return rlRes;
 
-  // Auth — bearer token
+  // Read raw body for HMAC verification
+  const rawBody = await request.text();
+
+  // Try Toast HMAC-SHA256 signature verification first
+  const toastSignature = request.headers.get('toast-signature');
+  const toastTimestamp = request.headers.get('toast-timestamp');
   const authHeader = request.headers.get('authorization');
-  if (!authHeader?.startsWith('Bearer ') || authHeader.slice(7) !== TOAST_WEBHOOK_SECRET) {
+
+  let authenticated = false;
+
+  if (toastSignature) {
+    // Toast HMAC verification
+    authenticated = verifyToastSignature(rawBody, toastSignature, toastTimestamp || '', TOAST_WEBHOOK_SECRET);
+    if (!authenticated) {
+      // Debug: log headers to help diagnose (remove after confirmed working)
+      console.error('Toast signature verification failed', {
+        hasSignature: !!toastSignature,
+        hasTimestamp: !!toastTimestamp,
+        signaturePreview: toastSignature?.slice(0, 20) + '...',
+        userAgent: request.headers.get('user-agent'),
+        allHeaders: Object.fromEntries([...request.headers.entries()].filter(([k]) =>
+          k.startsWith('toast') || k === 'content-type' || k === 'user-agent' || k === 'authorization'
+        )),
+      });
+    }
+  } else if (authHeader?.startsWith('Bearer ')) {
+    // Fallback: Bearer token (for simulator and direct API calls)
+    authenticated = authHeader.slice(7) === TOAST_WEBHOOK_SECRET;
+  }
+
+  if (!authenticated) {
+    console.error('Webhook auth failed', {
+      method: toastSignature ? 'HMAC' : authHeader ? 'Bearer' : 'none',
+      userAgent: request.headers.get('user-agent'),
+    });
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
-    const body = await request.json();
+    const body = JSON.parse(rawBody);
 
     // Toast sends different event types — we only care about order creation
     const eventType = body.eventType || body.type || 'ORDER_CREATED';
@@ -37,12 +76,12 @@ export async function POST(request) {
       modifiers: (item.modifiers || []).map((m) => m.displayName || m.name),
     }));
 
-    // Separate sides from mains (items with "side" in category or small items)
+    // Separate sides from mains
     const sides = [];
     const mains = [];
     for (const item of items) {
       const isSide = (item.name || '').toLowerCase().match(
-        /fries|rings|tots|slaw|salad|corn|pickles|mac.*cheese|side/
+        /fries|rings|tots|slaw|salad|corn|pickles|mac.*cheese|side|rice|beans|broccoli|sweet.?potato/
       );
       if (isSide) {
         sides.push(item);
@@ -51,7 +90,7 @@ export async function POST(request) {
       }
     }
 
-    // Determine dining option (dine-in, takeout, delivery)
+    // Determine dining option
     const diningOption = toastOrder.diningOption
       || toastOrder.serviceType
       || toastOrder.revenueCenter?.name
