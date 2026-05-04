@@ -5,12 +5,18 @@ import { useSearchParams } from 'next/navigation';
 import LineCoachDisplay from '@/src/LineCoachDisplay';
 import LineCoachAdmin from '@/src/LineCoachAdmin';
 import LineCoachSimulator from '@/src/LineCoachSimulator';
+import LineCoachHub from '@/src/LineCoachHub';
 
 function LineCoachRouter() {
   const searchParams = useSearchParams();
   const isAdmin = searchParams.has('admin');
   const isSimulator = searchParams.has('simulator');
+  const isHub = searchParams.has('hub');
   const store = searchParams.get('store') || 'hollywood';
+
+  if (isHub) {
+    return <LineCoachHub />;
+  }
 
   if (isSimulator) {
     return <LineCoachSimulator storeId={store} />;
