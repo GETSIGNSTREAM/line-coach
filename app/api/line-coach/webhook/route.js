@@ -6,11 +6,35 @@ import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
 const TOAST_WEBHOOK_SECRET = process.env.TOAST_WEBHOOK_SECRET;
 
-function verifyToastSignature(rawBody, signature, timestamp, secret) {
-  if (!signature || !secret) return false;
-  const payload = rawBody + timestamp;
-  const computed = createHmac('sha256', secret).update(payload).digest('base64');
-  return computed === signature;
+function tryVerifySignature(rawBody, request, secret) {
+  const sig = request.headers.get('toast-signature');
+  const ts = request.headers.get('toast-timestamp') || '';
+
+  if (!sig || !secret) return { verified: false, method: 'no-signature' };
+
+  // Try multiple concatenation orders
+  const attempts = [
+    { label: 'body+ts', payload: rawBody + ts },
+    { label: 'ts+body', payload: ts + rawBody },
+    { label: 'body-only', payload: rawBody },
+  ];
+
+  for (const attempt of attempts) {
+    const computed = createHmac('sha256', secret).update(attempt.payload).digest('base64');
+    if (computed === sig) {
+      return { verified: true, method: attempt.label };
+    }
+  }
+
+  // Also try hex encoding
+  for (const attempt of attempts) {
+    const computed = createHmac('sha256', secret).update(attempt.payload).digest('hex');
+    if (computed === sig) {
+      return { verified: true, method: attempt.label + '-hex' };
+    }
+  }
+
+  return { verified: false, method: 'hmac-mismatch' };
 }
 
 export async function POST(request) {
@@ -19,48 +43,46 @@ export async function POST(request) {
   const rlRes = rateLimitResponse(rl);
   if (rlRes) return rlRes;
 
-  // Read raw body for HMAC verification
   const rawBody = await request.text();
 
-  // Try Toast HMAC-SHA256 signature verification first
-  const toastSignature = request.headers.get('toast-signature');
-  const toastTimestamp = request.headers.get('toast-timestamp');
+  // Collect all headers for diagnosis
+  const headerMap = {};
+  for (const [key, value] of request.headers.entries()) {
+    headerMap[key] = key.toLowerCase().includes('secret') ? '***' : value;
+  }
+
+  const toastSig = request.headers.get('toast-signature');
   const authHeader = request.headers.get('authorization');
 
   let authenticated = false;
+  let authMethod = 'none';
 
-  if (toastSignature) {
-    // Toast HMAC verification
-    authenticated = verifyToastSignature(rawBody, toastSignature, toastTimestamp || '', TOAST_WEBHOOK_SECRET);
-    if (!authenticated) {
-      // Debug: log headers to help diagnose (remove after confirmed working)
-      console.error('Toast signature verification failed', {
-        hasSignature: !!toastSignature,
-        hasTimestamp: !!toastTimestamp,
-        signaturePreview: toastSignature?.slice(0, 20) + '...',
-        userAgent: request.headers.get('user-agent'),
-        allHeaders: Object.fromEntries([...request.headers.entries()].filter(([k]) =>
-          k.startsWith('toast') || k === 'content-type' || k === 'user-agent' || k === 'authorization'
-        )),
-      });
-    }
+  if (toastSig) {
+    const result = tryVerifySignature(rawBody, request, TOAST_WEBHOOK_SECRET);
+    authenticated = result.verified;
+    authMethod = result.method;
   } else if (authHeader?.startsWith('Bearer ')) {
-    // Fallback: Bearer token (for simulator and direct API calls)
     authenticated = authHeader.slice(7) === TOAST_WEBHOOK_SECRET;
+    authMethod = 'bearer';
   }
 
   if (!authenticated) {
-    console.error('Webhook auth failed', {
-      method: toastSignature ? 'HMAC' : authHeader ? 'Bearer' : 'none',
-      userAgent: request.headers.get('user-agent'),
-    });
+    // Log ALL headers so we can see exactly what Toast sends
+    console.error('WEBHOOK_AUTH_FAIL', JSON.stringify({
+      authMethod,
+      headers: headerMap,
+      bodyPreview: rawBody.slice(0, 200),
+      secretConfigured: !!TOAST_WEBHOOK_SECRET,
+      secretPreview: TOAST_WEBHOOK_SECRET ? TOAST_WEBHOOK_SECRET.slice(0, 8) + '...' : 'MISSING',
+    }));
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  console.log('WEBHOOK_AUTH_OK', authMethod);
 
   try {
     const body = JSON.parse(rawBody);
 
-    // Toast sends different event types — we only care about order creation
     const eventType = body.eventType || body.type || 'ORDER_CREATED';
     if (eventType !== 'ORDER_CREATED' && eventType !== 'order.created') {
       return NextResponse.json({ status: 'ignored', eventType });
@@ -69,14 +91,12 @@ export async function POST(request) {
     const toastOrder = body.order || body;
     const storeId = resolveStoreId(toastOrder.restaurantGuid || toastOrder.locationGuid);
 
-    // Map Toast order to our schema
     const items = (toastOrder.selections || toastOrder.items || []).map((item) => ({
       name: item.displayName || item.name,
       quantity: item.quantity || 1,
       modifiers: (item.modifiers || []).map((m) => m.displayName || m.name),
     }));
 
-    // Separate sides from mains
     const sides = [];
     const mains = [];
     for (const item of items) {
@@ -90,20 +110,17 @@ export async function POST(request) {
       }
     }
 
-    // Determine dining option
     const diningOption = toastOrder.diningOption
       || toastOrder.serviceType
       || toastOrder.revenueCenter?.name
       || null;
 
-    // Customer name from Toast
     const customerName = toastOrder.customer?.firstName
       || toastOrder.customer?.name
       || toastOrder.guestName
       || toastOrder.customerName
       || null;
 
-    // Check number
     const checkNumber = toastOrder.checkNumber
       || toastOrder.displayNumber
       || toastOrder.orderNumber
