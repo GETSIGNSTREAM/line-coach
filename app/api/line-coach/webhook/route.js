@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createHmac } from 'crypto';
-import { insertOrder, resolveStoreId } from '@/lib/line-coach';
+import { insertOrder, upsertOrderByToastId, bumpOrderByToastId, resolveStoreId } from '@/lib/line-coach';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
@@ -107,14 +107,33 @@ export async function POST(request) {
 
     const details = body.details || {};
     const toastOrder = details.order || body.order || body;
+    const toastOrderGuid = toastOrder.guid || body.guid || null;
     const restaurantGuid = details.restaurantGuid
       || toastOrder.restaurantGuid
       || request.headers.get('toast-restaurant-external-id')
       || '';
     const storeId = resolveStoreId(restaurantGuid);
 
-    // Parse checks
+    // ── Detect completed/voided orders → auto-bump ──────
+    const isVoided = !!toastOrder.voidDate;
+    const isDeleted = toastOrder.deleted === true;
+    const isCompleted = !!toastOrder.completedDate;
+
+    // Check if all checks are closed (all items fulfilled on KDS)
     const checks = toastOrder.checks || [];
+    const allChecksClosed = checks.length > 0 && checks.every((c) =>
+      c.closedDate || c.completedDate || c.voidDate
+    );
+
+    if ((isVoided || isDeleted || isCompleted || allChecksClosed) && toastOrderGuid) {
+      const { data: bumped } = await bumpOrderByToastId(toastOrderGuid);
+      if (bumped && bumped.length > 0) {
+        return NextResponse.json({ status: 'bumped', count: bumped.length });
+      }
+      return NextResponse.json({ status: 'ignored', reason: 'completed/voided, not in system' });
+    }
+
+    // ── Parse order items ───────────────────────────────
     const allSelections = [];
     let checkNumber = toastOrder.displayNumber || null;
     let customerName = null;
@@ -146,16 +165,13 @@ export async function POST(request) {
       const cleanName = cleanItemName(rawName);
       const rawModifiers = (item.modifiers || []).map((m) => m.displayName || m.name);
 
-      // Skip sauces ordered as standalone items (e.g., "WILD SAUCE" with "2 oz")
       if (isSauceItem(cleanName)) continue;
 
-      // Standalone side (e.g., "BRUSSEL SPROUTS" ordered as its own item)
       if (isSideItem(cleanName)) {
         sides.push({ name: titleCase(cleanName), quantity: item.quantity || 1 });
         continue;
       }
 
-      // Main entree — extract sides from its modifiers
       const extracted = extractSidesFromModifiers(rawModifiers);
       sides.push(...extracted.sides);
 
@@ -166,7 +182,7 @@ export async function POST(request) {
       });
     }
 
-    // Deduplicate sides by name
+    // Deduplicate sides
     const sideMap = {};
     for (const side of sides) {
       if (sideMap[side.name]) {
@@ -184,7 +200,6 @@ export async function POST(request) {
 
     const order = {
       store_id: storeId,
-      toast_order_id: toastOrder.guid || body.guid || null,
       order_number: checkNumber,
       customer_name: customerName,
       items: mains,
@@ -199,9 +214,13 @@ export async function POST(request) {
       return NextResponse.json({ status: 'ignored', reason: 'no items' });
     }
 
-    const { data, error } = await insertOrder(order);
+    // Upsert: update existing order or insert new one
+    const { data, error } = toastOrderGuid
+      ? await upsertOrderByToastId(toastOrderGuid, order)
+      : await insertOrder(order);
+
     if (error) {
-      console.error('Insert failed:', error.message);
+      console.error('Order save failed:', error.message);
       return NextResponse.json({ error: 'Failed to process order' }, { status: 500 });
     }
 
