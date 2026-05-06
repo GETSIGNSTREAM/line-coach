@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import { createHmac } from 'crypto';
-import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId } from '@/lib/line-coach';
+import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId, logWebhook } from '@/lib/line-coach';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 import { getServiceClient } from '@/lib/supabase';
+
+function clientIp(request) {
+  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || request.headers.get('x-real-ip')
+    || null;
+}
 
 const TOAST_WEBHOOK_SECRET = process.env.TOAST_WEBHOOK_SECRET;
 
@@ -110,10 +116,16 @@ function verifyToastHmac(rawBody, signatureHeader, secret) {
 // ── Webhook handler ─────────────────────────────────────
 
 export async function POST(request) {
+  const start = Date.now();
+  const ip = clientIp(request);
+
   const rlKey = getRateLimitKey(request, 'webhook');
   const rl = checkRateLimit(rlKey, RATE_LIMITS.webhook.limit, RATE_LIMITS.webhook.windowMs);
   const rlRes = rateLimitResponse(rl);
-  if (rlRes) return rlRes;
+  if (rlRes) {
+    logWebhook({ status: 'rate_limited', http_status: 429, ip, duration_ms: Date.now() - start });
+    return rlRes;
+  }
 
   const rawBody = await request.text();
   const userAgent = request.headers.get('user-agent') || '';
@@ -131,6 +143,7 @@ export async function POST(request) {
     authenticated = true;
   }
   if (!authenticated) {
+    logWebhook({ status: 'unauthorized', http_status: 401, ip, duration_ms: Date.now() - start, error_message: 'Missing or invalid HMAC/bearer' });
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -148,6 +161,7 @@ export async function POST(request) {
     const storeId = resolveStoreId(restaurantGuid);
 
     if (!toastOrderGuid) {
+      logWebhook({ store_id: storeId, status: 'ignored', http_status: 200, ip, payload: body, duration_ms: Date.now() - start, error_message: 'no order guid' });
       return NextResponse.json({ status: 'ignored', reason: 'no order guid' });
     }
 
@@ -208,6 +222,7 @@ export async function POST(request) {
 
     if (isVoided || isDeleted || isCompleted || allChecksKitchenDone) {
       await bumpOrderByToastId(toastOrderGuid);
+      logWebhook({ store_id: storeId, status: 'ok', http_status: 200, event_type: 'bump', toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start });
       return NextResponse.json({ status: 'bumped' });
     }
 
@@ -300,6 +315,7 @@ export async function POST(request) {
     }
 
     if (mains.length === 0 && deduplicatedSides.length === 0) {
+      logWebhook({ store_id: storeId, status: 'ignored', http_status: 200, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start, error_message: 'no food items' });
       return NextResponse.json({ status: 'ignored', reason: 'no food items' });
     }
 
@@ -332,12 +348,15 @@ export async function POST(request) {
     const { data, error } = await upsertOrderByToastId(toastOrderGuid, order);
     if (error) {
       console.error('Order save failed:', error.message);
+      logWebhook({ store_id: storeId, status: 'insert_error', http_status: 500, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start, error_message: error.message });
       return NextResponse.json({ error: 'Failed to process order' }, { status: 500 });
     }
 
+    logWebhook({ store_id: storeId, status: 'ok', http_status: 200, toast_order_id: toastOrderGuid, order_id: data.id, ip, payload: body, duration_ms: Date.now() - start });
     return NextResponse.json({ status: 'ok', orderId: data.id });
   } catch (err) {
     console.error('Webhook error:', err.message);
+    logWebhook({ status: 'parse_error', http_status: 400, ip, duration_ms: Date.now() - start, error_message: err.message });
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 }
