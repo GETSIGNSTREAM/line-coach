@@ -60,6 +60,40 @@ function computePriorityRank(isRush, diningOption) {
   return 30;
 }
 
+// ── Customer name extraction ────────────────────────────
+//
+// Toast does not consistently send a customer.firstName/lastName for
+// in-store or delivery-app orders. The customer name (or initial) lives
+// in `check.tabName` with provider-specific prefixes:
+//   "Y"                          → in-store, cashier typed an initial
+//   "CARDHOLDER, VISA"           → in-store paid by card, no name typed
+//   "DD 264b82f9 Alosha R"       → DoorDash, "Alosha R" is the customer
+//   "DD 7e465e72 PickUp-Sean J"  → DoorDash pickup, "Sean J"
+//   "  UBER144F8 Carson H.  "    → UberEats, "Carson H."
+//   "GH abc12345 Jordan M"       → Grubhub (assumed pattern; same family)
+//
+// parseCustomerName strips the courier prefix and identifier and returns
+// just the human-readable name, or null if there isn't one to show.
+const COURIER_PREFIX_RE = /^\s*(?:DD|UBER(?:EATS)?|GH|GRUBHUB|POSTMATES)[\s_]*[a-f0-9]{4,}[\s_-]*(?:PickUp[-\s])?/i;
+const CARDHOLDER_RE = /^\s*CARDHOLDER\b/i;
+
+function parseCustomerName(tabName) {
+  if (!tabName || typeof tabName !== 'string') return null;
+  let s = tabName.trim();
+  if (!s) return null;
+  // Card placeholder — never a real name.
+  if (CARDHOLDER_RE.test(s)) return null;
+  // Strip courier ID prefix if present.
+  const stripped = s.replace(COURIER_PREFIX_RE, '').trim();
+  if (stripped) s = stripped;
+  // Tidy any leftover whitespace runs.
+  s = s.replace(/\s+/g, ' ').trim();
+  // Reject pure single-letter / very short non-courier values? Keep them.
+  // The kitchen will see "Y" for walk-ins where that's all the cashier
+  // typed — that's still useful (matches their receipt).
+  return s || null;
+}
+
 // ── Name cleanup ────────────────────────────────────────
 
 function cleanItemName(name) {
@@ -247,10 +281,15 @@ export async function POST(request) {
           : check.specialInstructions;
       }
 
-      if (check.customer) {
-        customerName = customerName
-          || [check.customer.firstName, check.customer.lastName].filter(Boolean).join(' ')
-          || check.customer.name;
+      if (!customerName && check.customer) {
+        customerName = [check.customer.firstName, check.customer.lastName].filter(Boolean).join(' ')
+          || check.customer.name
+          || null;
+      }
+      // Fallback: many real Toast payloads ship the customer name only
+      // inside check.tabName, with courier prefixes for delivery apps.
+      if (!customerName) {
+        customerName = parseCustomerName(check.tabName);
       }
 
       for (const sel of check.selections || []) {
