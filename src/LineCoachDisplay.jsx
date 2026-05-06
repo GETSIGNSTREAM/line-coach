@@ -432,12 +432,12 @@ export default function LineCoachDisplay({ storeId }) {
               const cookTime = sideConfig?.cook_time || 0;
               const imageUrl = getSideImageUrl(name);
 
-              // Dynamic sizing based on number of sides
+              // Dynamic sizing based on number of sides — compact for narrow column
               const n = batchedSides.length;
-              const imgSize = n <= 3 ? '12vh' : n <= 6 ? '9vh' : '7vh';
-              const nameSize = n <= 3 ? '2.2vh' : n <= 6 ? '1.8vh' : '1.5vh';
-              const countSize = n <= 3 ? '8vh' : n <= 6 ? '6vh' : '4.5vh';
-              const actionSize = n <= 3 ? '1.5vh' : n <= 6 ? '1.3vh' : '1.1vh';
+              const imgSize = n <= 4 ? '7vh' : n <= 8 ? '5.5vh' : '4.5vh';
+              const nameSize = n <= 4 ? '1.5vh' : n <= 8 ? '1.3vh' : '1.1vh';
+              const countSize = n <= 4 ? '5vh' : n <= 8 ? '4vh' : '3vh';
+              const actionSize = n <= 4 ? '1.2vh' : n <= 8 ? '1vh' : '0.9vh';
 
               return (
                 <div key={name} style={{
@@ -544,7 +544,7 @@ const s = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '10px 20px',
+    padding: '6px 16px',
     background: BRAND.charcoalDark,
     borderBottom: `2px solid ${BRAND.gold}`,
   },
@@ -579,13 +579,14 @@ const s = {
   // Main Layout
   mainGrid: {
     display: 'grid',
-    gridTemplateColumns: '3fr 2fr',
-    gap: '12px',
-    padding: '12px',
-    minHeight: 'calc(100vh - 60px)',
+    gridTemplateColumns: '1fr 280px',
+    gap: '8px',
+    padding: '8px',
+    height: 'calc(100vh - 50px)',
+    overflow: 'hidden',
   },
-  leftCol: { display: 'flex', flexDirection: 'column', gap: '12px' },
-  rightCol: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  leftCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  rightCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   emptyState: {
     textAlign: 'center',
     color: `${BRAND.cream}60`,
@@ -594,18 +595,20 @@ const s = {
   },
   // Side Batching
   sidesPanelHeader: {
-    fontSize: '1rem',
+    fontSize: '0.85rem',
     fontWeight: 700,
     color: BRAND.gold,
     fontFamily: "'Oswald', sans-serif",
     letterSpacing: '2px',
-    padding: '8px 2%',
+    padding: '4px 2%',
+    flexShrink: 0,
   },
   sidesContainer: {
     display: 'flex',
     flexDirection: 'column',
     flex: 1,
     minHeight: 0,
+    overflow: 'hidden',
   },
   // Quick Tip
   quickTip: {
