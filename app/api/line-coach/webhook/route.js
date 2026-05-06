@@ -1,34 +1,36 @@
 import { NextResponse } from 'next/server';
 import { createHmac } from 'crypto';
-import { insertOrder, resolveStoreId } from '@/lib/line-coach';
+import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId } from '@/lib/line-coach';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
 const TOAST_WEBHOOK_SECRET = process.env.TOAST_WEBHOOK_SECRET;
 
-// ── Side and sauce detection ────────────────────────────
+// ── Item classification ─────────────────────────────────
 
 const SIDE_NAMES = /^(spanish rice|charro beans|sweet potatoes?|broccoli|charred broc|kale slaw|mac salad|mexican street corn|mex street corn|chips and guac|brussel sprouts|brussels sprouts|green chicken pozole|green pozole|uptown mac.*cheese|buffalo cauliflower|roasted vegg)/i;
 
 const SAUCE_NAMES = /^(wild sauce|house salsa|charred salsa|pico de gallo|salsa verde|nashville fire|extra sauce)/i;
 
-const SKIP_MODIFIERS = /^(2 oz|4 oz|large|small|yes.*tortillas?|add tortillas?|no tortillas?)/i;
+const DRINK_NAMES = /^(watermelon fresca|hibiscus strawberry|green fresca|mexican coke|agua fresca|bottled water|lemonade|iced tea|arnold palmer|sprite|coke|diet coke|fanta|dr pepper|jarritos)/i;
 
-function isSideItem(name) {
-  return SIDE_NAMES.test(name);
-}
+const SKIP_ITEMS = /^(tortillas?|chips$|just guac$)/i;
 
-function isSauceItem(name) {
-  return SAUCE_NAMES.test(name);
-}
+const SKIP_MODIFIERS = /^(2 oz|4 oz|8 oz|large|small|regular|yes.*tortillas?|add tortillas?|no tortillas?)/i;
+
+function isSideItem(name) { return SIDE_NAMES.test(name); }
+function isSauceItem(name) { return SAUCE_NAMES.test(name); }
+function isDrinkItem(name) { return DRINK_NAMES.test(name); }
+function isSkipItem(name) { return SKIP_ITEMS.test(name); }
 
 // ── Name cleanup ────────────────────────────────────────
 
 function cleanItemName(name) {
   return name
-    .replace(/\s*-\s*PROTEIN:?\s*\+?\d+G?/gi, '')  // Remove "- PROTEIN: +139G"
-    .replace(/\s*\(LARGE\)/gi, '')                    // Remove "(LARGE)"
-    .replace(/\s*\(SMALL\)/gi, '')                    // Remove "(SMALL)"
+    .replace(/\s*-\s*PROTEIN:?\s*\+?\d+G?/gi, '')
+    .replace(/\s*\(LARGE\)/gi, '')
+    .replace(/\s*\(SMALL\)/gi, '')
+    .replace(/\s*\(REGULAR\)/gi, '')
     .trim();
 }
 
@@ -87,7 +89,6 @@ export async function POST(request) {
   const authHeader = request.headers.get('authorization');
 
   let authenticated = false;
-
   if (toastSig && TOAST_WEBHOOK_SECRET) {
     authenticated = verifyToastHmac(rawBody, toastSig, TOAST_WEBHOOK_SECRET);
   }
@@ -97,7 +98,6 @@ export async function POST(request) {
   if (!authenticated && userAgent.includes('Apache-HttpClient')) {
     authenticated = true;
   }
-
   if (!authenticated) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -107,14 +107,33 @@ export async function POST(request) {
 
     const details = body.details || {};
     const toastOrder = details.order || body.order || body;
+    // Order GUID — NOT the webhook event GUID
+    const toastOrderGuid = toastOrder.guid || null;
     const restaurantGuid = details.restaurantGuid
       || toastOrder.restaurantGuid
       || request.headers.get('toast-restaurant-external-id')
       || '';
     const storeId = resolveStoreId(restaurantGuid);
 
-    // Parse checks
+    if (!toastOrderGuid) {
+      return NextResponse.json({ status: 'ignored', reason: 'no order guid' });
+    }
+
+    // ── Detect completed/voided → auto-bump ─────────────
+    const isVoided = !!toastOrder.voidDate;
+    const isDeleted = toastOrder.deleted === true;
+    const isCompleted = !!toastOrder.completedDate;
     const checks = toastOrder.checks || [];
+    const allChecksClosed = checks.length > 0 && checks.every((c) =>
+      c.closedDate || c.completedDate || c.voidDate
+    );
+
+    if (isVoided || isDeleted || isCompleted || allChecksClosed) {
+      await bumpOrderByToastId(toastOrderGuid);
+      return NextResponse.json({ status: 'bumped' });
+    }
+
+    // ── Parse items from all checks ─────────────────────
     const allSelections = [];
     let checkNumber = toastOrder.displayNumber || null;
     let customerName = null;
@@ -122,12 +141,25 @@ export async function POST(request) {
     let specialInstructions = null;
 
     for (const check of checks) {
-      checkNumber = checkNumber || check.displayNumber;
-      diningOption = diningOption || check.diningOption;
-      specialInstructions = specialInstructions || check.specialInstructions;
-      if (check.customer) {
-        customerName = customerName || check.customer.firstName || check.customer.name;
+      // Use display number, not the check GUID
+      if (!checkNumber && check.displayNumber) {
+        checkNumber = String(check.displayNumber);
       }
+      diningOption = diningOption || check.diningOption;
+
+      // Collect special instructions from check level
+      if (check.specialInstructions) {
+        specialInstructions = specialInstructions
+          ? specialInstructions + ' | ' + check.specialInstructions
+          : check.specialInstructions;
+      }
+
+      if (check.customer) {
+        customerName = customerName
+          || [check.customer.firstName, check.customer.lastName].filter(Boolean).join(' ')
+          || check.customer.name;
+      }
+
       for (const sel of check.selections || []) {
         allSelections.push(sel);
       }
@@ -137,25 +169,29 @@ export async function POST(request) {
       allSelections.push(...(toastOrder.selections || toastOrder.items || []));
     }
 
-    // Process items: separate mains, sides, and sauces
+    // ── Process items ───────────────────────────────────
     const mains = [];
     const sides = [];
 
     for (const item of allSelections) {
       const rawName = item.displayName || item.name || item.itemName || 'Unknown';
       const cleanName = cleanItemName(rawName);
+
+      // Skip drinks, sauces, and non-food items
+      if (isDrinkItem(cleanName) || isSauceItem(cleanName) || isSkipItem(cleanName)) continue;
+
+      // Voided items
+      if (item.voided || item.voidDate) continue;
+
       const rawModifiers = (item.modifiers || []).map((m) => m.displayName || m.name);
 
-      // Skip sauces ordered as standalone items (e.g., "WILD SAUCE" with "2 oz")
-      if (isSauceItem(cleanName)) continue;
-
-      // Standalone side (e.g., "BRUSSEL SPROUTS" ordered as its own item)
+      // Standalone side
       if (isSideItem(cleanName)) {
         sides.push({ name: titleCase(cleanName), quantity: item.quantity || 1 });
         continue;
       }
 
-      // Main entree — extract sides from its modifiers
+      // Main entree — extract sides from modifiers
       const extracted = extractSidesFromModifiers(rawModifiers);
       sides.push(...extracted.sides);
 
@@ -166,7 +202,7 @@ export async function POST(request) {
       });
     }
 
-    // Deduplicate sides by name
+    // Deduplicate sides
     const sideMap = {};
     for (const side of sides) {
       if (sideMap[side.name]) {
@@ -179,35 +215,35 @@ export async function POST(request) {
 
     diningOption = diningOption || toastOrder.diningOption || toastOrder.serviceType || null;
     if (!customerName && toastOrder.customer) {
-      customerName = toastOrder.customer.firstName || toastOrder.customer.name;
+      customerName = [toastOrder.customer.firstName, toastOrder.customer.lastName].filter(Boolean).join(' ')
+        || toastOrder.customer.name;
+    }
+
+    if (mains.length === 0 && deduplicatedSides.length === 0) {
+      return NextResponse.json({ status: 'ignored', reason: 'no food items' });
     }
 
     const order = {
       store_id: storeId,
-      toast_order_id: toastOrder.guid || body.guid || null,
       order_number: checkNumber,
       customer_name: customerName,
       items: mains,
       sides: deduplicatedSides,
       priority: toastOrder.priority === 'RUSH' ? 'rush' : 'normal',
       fire_at: new Date().toISOString(),
-      notes: specialInstructions || toastOrder.specialInstructions || null,
+      notes: specialInstructions,
       dining_option: diningOption,
     };
 
-    if (mains.length === 0 && deduplicatedSides.length === 0) {
-      return NextResponse.json({ status: 'ignored', reason: 'no items' });
-    }
-
-    const { data, error } = await insertOrder(order);
+    const { data, error } = await upsertOrderByToastId(toastOrderGuid, order);
     if (error) {
-      console.error('Insert failed:', error.message);
+      console.error('Order save failed:', error.message);
       return NextResponse.json({ error: 'Failed to process order' }, { status: 500 });
     }
 
     return NextResponse.json({ status: 'ok', orderId: data.id });
   } catch (err) {
-    console.error('Webhook parse error:', err.message);
+    console.error('Webhook error:', err.message);
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 }
