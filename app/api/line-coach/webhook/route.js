@@ -27,9 +27,26 @@ function isSkipItem(name) { return SKIP_ITEMS.test(name); }
 
 // ── Priority ranking ────────────────────────────────────
 
+// Toast's dining_option field can arrive as:
+//   - a plain string ("Dine In", "Takeout", etc.)
+//   - an object reference like { guid, entityType: "DiningOption", externalId, name? }
+//     — sometimes with a `name`, sometimes only the guid.
+//   - null / undefined.
+// Coerce to a safe string so downstream .toLowerCase() never throws,
+// and store something human-readable when possible. Unknown guids
+// fall back to '' (treated as Takeout by computePriorityRank).
+function diningOptionToString(opt) {
+  if (opt == null) return '';
+  if (typeof opt === 'string') return opt;
+  if (typeof opt === 'object') {
+    return opt.name || opt.displayName || opt.label || '';
+  }
+  return String(opt);
+}
+
 function computePriorityRank(isRush, diningOption) {
   if (isRush) return 10;
-  const opt = (diningOption || '').toLowerCase();
+  const opt = diningOptionToString(diningOption).toLowerCase();
   if (opt.includes('dine in') || opt === 'dine-in' || opt === 'dinein' || opt.includes('for here')) return 20;
   if (opt.includes('takeout') || opt.includes('take out') || opt.includes('pickup') || opt.includes('pick up') || opt.includes('to go') || opt.includes('togo')) return 30;
   if (opt.includes('delivery') || opt.includes('deliver')) return 40;
@@ -39,7 +56,8 @@ function computePriorityRank(isRush, diningOption) {
 // ── Name cleanup ────────────────────────────────────────
 
 function cleanItemName(name) {
-  return name
+  // Defensive: Toast occasionally sends non-string item names.
+  return String(name || '')
     .replace(/\s*-\s*PROTEIN:?\s*\+?\d+G?/gi, '')
     .replace(/\s*\(LARGE\)/gi, '')
     .replace(/\s*\(SMALL\)/gi, '')
@@ -48,7 +66,7 @@ function cleanItemName(name) {
 }
 
 function titleCase(str) {
-  return str.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  return String(str || '').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // ── Extract sides from modifiers ────────────────────────
@@ -227,6 +245,8 @@ export async function POST(request) {
     const deduplicatedSides = Object.values(sideMap);
 
     diningOption = diningOption || toastOrder.diningOption || toastOrder.serviceType || null;
+    // Normalize to a string — Toast may send an object { guid, entityType, name? }.
+    const diningOptionStr = diningOptionToString(diningOption) || null;
     if (!customerName && toastOrder.customer) {
       customerName = [toastOrder.customer.firstName, toastOrder.customer.lastName].filter(Boolean).join(' ')
         || toastOrder.customer.name;
@@ -245,7 +265,7 @@ export async function POST(request) {
 
     // Priority
     const isRush = toastOrder.priority === 'RUSH';
-    const priorityRank = computePriorityRank(isRush, diningOption);
+    const priorityRank = computePriorityRank(isRush, diningOptionStr);
 
     const order = {
       store_id: storeId,
@@ -259,7 +279,7 @@ export async function POST(request) {
       toast_created_at: toastCreatedAt || new Date().toISOString(),
       estimated_ready_at: estimatedReadyAt.toISOString(),
       notes: specialInstructions,
-      dining_option: diningOption,
+      dining_option: diningOptionStr,
     };
 
     const { data, error } = await upsertOrderByToastId(toastOrderGuid, order);
