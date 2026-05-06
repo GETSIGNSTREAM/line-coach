@@ -3,6 +3,7 @@ import { createHmac } from 'crypto';
 import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId } from '@/lib/line-coach';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
+import { getServiceClient } from '@/lib/supabase';
 
 const TOAST_WEBHOOK_SECRET = process.env.TOAST_WEBHOOK_SECRET;
 
@@ -141,10 +142,10 @@ export async function POST(request) {
     // Order GUID — NOT the webhook event GUID
     const toastOrderGuid = toastOrder.guid || null;
 
-    // TEMPORARY DEBUG: log the shape of one webhook so we can see where
-    // Toast hides customer name. Logs ONLY top-level keys + nested key
-    // names (not values) so PII is not written to the runtime log.
-    // Remove after diagnosis.
+    // TEMPORARY DEBUG: persist a SHAPE of one webhook payload + the
+    // customer/dining-option branches into a Supabase debug table so we
+    // can query the full data (Vercel log API truncates aggressively).
+    // Remove this block + the debug table once parsing is fixed.
     try {
       const shape = (obj, depth = 2) => {
         if (obj == null || typeof obj !== 'object') return typeof obj;
@@ -154,14 +155,11 @@ export async function POST(request) {
         for (const k of Object.keys(obj)) out[k] = shape(obj[k], depth - 1);
         return out;
       };
-      console.log('TOAST_PAYLOAD_SHAPE:', JSON.stringify(shape(toastOrder, 4)));
-      // Also log only the customer-related branches with VALUES so we can
-      // see exactly where the name lives. Names are not high-sensitivity
-      // data and these will be removed shortly.
       const customerBlobs = {
         order_customer: toastOrder.customer || null,
         delivery_info: toastOrder.deliveryInfo || null,
         curbside: toastOrder.curbsidePickupInfo || null,
+        order_source: toastOrder.source || null,
         check_count: (toastOrder.checks || []).length,
         check_customers: (toastOrder.checks || []).map((c) => ({
           customer: c.customer || null,
@@ -169,9 +167,17 @@ export async function POST(request) {
           customerCompany: c.customerCompany || null,
           displayNumber: c.displayNumber || null,
           dining_option: c.diningOption || null,
+          source: c.source || null,
         })),
       };
-      console.log('TOAST_CUSTOMER_DEBUG:', JSON.stringify(customerBlobs));
+      const db = getServiceClient();
+      // Fire-and-forget; don't block webhook processing.
+      db.from('lc_debug_payloads').insert({
+        toast_order_id: toastOrderGuid,
+        store_id: storeId,
+        shape: shape(toastOrder, 4),
+        customer_blobs: customerBlobs,
+      }).then(() => {}, (e) => console.log('debug insert failed:', e?.message));
     } catch (logErr) {
       console.log('debug log failed:', logErr.message);
     }
