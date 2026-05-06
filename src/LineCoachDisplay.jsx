@@ -50,7 +50,10 @@ export default function LineCoachDisplay({ storeId }) {
   const [config, setConfig] = useState(null);
   const [now, setNow] = useState(new Date());
   const [qualityTipIndex, setQualityTipIndex] = useState(0);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const supabaseRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const lastOrderCountRef = useRef(null);
 
   useEffect(() => {
     if (supabaseUrl && supabaseAnonKey) {
@@ -108,6 +111,69 @@ export default function LineCoachDisplay({ storeId }) {
     const interval = setInterval(heartbeat, 60_000);
     return () => clearInterval(interval);
   }, [storeId]);
+
+  // ── Audio alerts ────────────────────────────────────
+
+  function ensureAudioCtx() {
+    if (audioCtxRef.current) return audioCtxRef.current;
+    if (typeof window === 'undefined') return null;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    try {
+      audioCtxRef.current = new Ctx();
+    } catch {
+      return null;
+    }
+    return audioCtxRef.current;
+  }
+
+  function playChime() {
+    const ctx = ensureAudioCtx();
+    if (!ctx || ctx.state === 'suspended') return;
+    const volume = config?.settings?.alerts_volume ?? 0.5;
+    // Two-note chime: C6 then E6
+    const notes = [
+      { freq: 1046.5, start: 0, dur: 0.18 },
+      { freq: 1318.5, start: 0.16, dur: 0.28 },
+    ];
+    const t0 = ctx.currentTime;
+    for (const n of notes) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = n.freq;
+      gain.gain.setValueAtTime(0, t0 + n.start);
+      gain.gain.linearRampToValueAtTime(volume * 0.5, t0 + n.start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + n.start + n.dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0 + n.start);
+      osc.stop(t0 + n.start + n.dur + 0.05);
+    }
+  }
+
+  function unlockAudio() {
+    const ctx = ensureAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(() => setAudioUnlocked(true)).catch(() => {});
+    } else {
+      setAudioUnlocked(true);
+    }
+  }
+
+  // Detect new orders and play chime when count increases.
+  useEffect(() => {
+    const enabled = config?.settings?.alerts_enabled !== false;
+    const prev = lastOrderCountRef.current;
+    const curr = orders.length;
+    // Skip first observation (initial load) and any non-increasing change.
+    if (prev != null && curr > prev && enabled && audioUnlocked) {
+      playChime();
+    }
+    lastOrderCountRef.current = curr;
+    // playChime closes over config; reads it at call time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders.length, config, audioUnlocked]);
 
   // ── Data Processing ─────────────────────────────────
 
@@ -221,6 +287,8 @@ export default function LineCoachDisplay({ storeId }) {
 
   // ── Quality Coach mode ──────────────────────────────
 
+  const showAudioUnlock = (config?.settings?.alerts_enabled !== false) && !audioUnlocked;
+
   if (isSlowPeriod && tips.length > 0) {
     const tip = tips[qualityTipIndex % tips.length];
     const enText = tip.en && tip.en.trim();
@@ -229,6 +297,7 @@ export default function LineCoachDisplay({ storeId }) {
       <div style={s.container}>
         <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
         <Header now={now} orderCount={0} />
+        {showAudioUnlock && <AudioUnlockBanner onUnlock={unlockAudio} />}
         <div style={s.qualityCoach}>
           <div style={s.qualityLabel}>QUALITY COACH</div>
           <div style={s.qualityTipBlock} key={qualityTipIndex}>
@@ -259,6 +328,7 @@ export default function LineCoachDisplay({ storeId }) {
   return (
     <div style={s.container}>
       <Header now={now} orderCount={orders.length} />
+      {showAudioUnlock && <AudioUnlockBanner onUnlock={unlockAudio} />}
 
       <div style={s.mainGrid}>
         {/* Left Column: Fire Order — grouped by order */}
@@ -583,6 +653,34 @@ export default function LineCoachDisplay({ storeId }) {
 }
 
 // ── Header Component ────────────────────────────────────
+
+function AudioUnlockBanner({ onUnlock }) {
+  return (
+    <button
+      onClick={onUnlock}
+      style={{
+        position: 'fixed',
+        top: '12px',
+        right: '12px',
+        zIndex: 1000,
+        background: BRAND.gold,
+        color: BRAND.charcoal,
+        border: 'none',
+        padding: '8px 14px',
+        borderRadius: '999px',
+        cursor: 'pointer',
+        fontFamily: "'Oswald', sans-serif",
+        letterSpacing: '1.5px',
+        textTransform: 'uppercase',
+        fontSize: '0.75rem',
+        fontWeight: 700,
+        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+      }}
+    >
+      🔔 Tap to enable sound
+    </button>
+  );
+}
 
 function Header({ now, orderCount }) {
   return (

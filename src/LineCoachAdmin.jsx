@@ -500,12 +500,33 @@ export default function LineCoachAdmin({ storeId }) {
             onChange={(e) => { updateConfig('settings', { ...settings, ticket_warning_minutes: parseInt(e.target.value) || 5 }); }} />
           <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>minutes until yellow</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Danger (Red):</label>
           <input type="number" style={{ ...styles.input, marginBottom: 0, width: '100px' }}
             value={settings.ticket_danger_minutes || 8}
             onChange={(e) => { updateConfig('settings', { ...settings, ticket_danger_minutes: parseInt(e.target.value) || 8 }); }} />
           <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>minutes until red</span>
+        </div>
+        <div style={{ borderTop: `1px solid ${BRAND.charcoalLight}`, paddingTop: '16px', marginTop: '8px', marginBottom: '16px' }}>
+          <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", fontSize: '0.9rem', letterSpacing: '1px', marginBottom: '12px' }}>AUDIO ALERTS</div>
+        </div>
+        <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Enable chime:</label>
+          <input type="checkbox"
+            checked={settings.alerts_enabled !== false}
+            onChange={(e) => { updateConfig('settings', { ...settings, alerts_enabled: e.target.checked }); }} />
+          <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>play tone on each new order</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Volume:</label>
+          <input type="range" min={0} max={1} step={0.1}
+            value={settings.alerts_volume ?? 0.5}
+            onChange={(e) => { updateConfig('settings', { ...settings, alerts_volume: parseFloat(e.target.value) }); }}
+            style={{ width: '200px' }} />
+          <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>{Math.round((settings.alerts_volume ?? 0.5) * 100)}%</span>
+        </div>
+        <div style={{ marginTop: '8px', color: `${BRAND.cream}80`, fontSize: '0.8rem' }}>
+          Browsers block audio until the kitchen tablet is tapped once. The display shows a one-time prompt.
         </div>
       </div>
     );
