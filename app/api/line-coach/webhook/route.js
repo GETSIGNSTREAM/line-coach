@@ -151,15 +151,21 @@ export async function POST(request) {
     }
 
     // ── Detect completed/voided → auto-bump ─────────────
+    // IMPORTANT: Toast's check.closedDate means the check was SETTLED/PAID
+    // (front-of-house concept), NOT that the kitchen finished cooking it.
+    // Prepaid online/delivery orders arrive with closedDate already set,
+    // which previously caused them to be auto-bumped within seconds of
+    // arrival before the kitchen ever saw them. Only treat completedDate
+    // and voidDate on the order or its checks as kitchen-done signals.
     const isVoided = !!toastOrder.voidDate;
     const isDeleted = toastOrder.deleted === true;
     const isCompleted = !!toastOrder.completedDate;
     const checks = toastOrder.checks || [];
-    const allChecksClosed = checks.length > 0 && checks.every((c) =>
-      c.closedDate || c.completedDate || c.voidDate
+    const allChecksKitchenDone = checks.length > 0 && checks.every((c) =>
+      c.completedDate || c.voidDate
     );
 
-    if (isVoided || isDeleted || isCompleted || allChecksClosed) {
+    if (isVoided || isDeleted || isCompleted || allChecksKitchenDone) {
       await bumpOrderByToastId(toastOrderGuid);
       return NextResponse.json({ status: 'bumped' });
     }
