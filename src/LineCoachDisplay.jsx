@@ -228,194 +228,203 @@ export default function LineCoachDisplay({ storeId }) {
       <div style={s.mainGrid}>
         {/* Left Column: Fire Order — grouped by order */}
         <div style={s.leftCol}>
-          <div style={s.sidesPanelHeader}>FIRE ORDER</div>
           <div style={s.sidesContainer}>
             {orderSequence.length === 0 && (
-              <div style={s.emptyState}>All orders plated</div>
+              <div style={{ ...s.emptyState, fontSize: '1.5rem' }}>All orders plated</div>
             )}
             {(() => {
-              const n = orderSequence.length;
-              // Count total rows (each entree + 1 sides line per order)
-              const totalRows = orderSequence.reduce((sum, o) => sum + o.items.length + (o.sides.length > 0 ? 1 : 0), 0);
-              const rowHeight = Math.min(85 / Math.max(totalRows, 1), 12); // vh per row, max 12vh
-              const imgSize = `${Math.min(rowHeight * 0.9, 8)}vh`;
-              const nameSize = `${Math.min(rowHeight * 0.35, 2.5)}vh`;
-              const metaSize = `${Math.min(rowHeight * 0.2, 1.3)}vh`;
-              const sideTextSize = `${Math.min(rowHeight * 0.18, 1.2)}vh`;
-
               const diningColors = {
                 'dine in': BRAND.green,
                 'takeout': BRAND.blue,
                 'delivery': BRAND.terracotta,
               };
 
-              return orderSequence.map((order, oi) => {
-                const diningLabel = order.diningOption || '';
-                const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
-                const ticketBorderColor = order.priority === 'rush' ? BRAND.red : order.ticketColor;
-                const sidesText = order.sides.map((side) => {
-                  const sn = typeof side === 'string' ? side : side.name;
-                  const sq = side.quantity || 1;
-                  return sq > 1 ? `${sq}x ${sn}` : sn;
-                }).join(', ');
+              // Max 8 orders visible — enforce minimum readable size
+              const MAX_VISIBLE = 8;
+              const visibleOrders = orderSequence.slice(0, MAX_VISIBLE);
+              const hiddenCount = orderSequence.length - MAX_VISIBLE;
 
-                return (
-                  <div key={oi} style={{
-                    display: 'flex',
-                    borderTop: oi > 0 ? `2px solid ${BRAND.gold}` : 'none',
-                  }}>
-                    {/* Left sidebar: check info + timer */}
-                    <div style={{
-                      width: `clamp(60px, ${n <= 3 ? '10%' : '8%'}, 100px)`,
-                      background: `${ticketBorderColor}20`,
-                      borderLeft: `4px solid ${ticketBorderColor}`,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: '4px 2px',
-                      flexShrink: 0,
-                      gap: '2px',
-                    }}>
-                      <div style={{
-                        fontSize: `clamp(0.7rem, ${metaSize}, 1rem)`,
-                        fontWeight: 700,
-                        color: BRAND.bone,
-                        fontFamily: "'Oswald', sans-serif",
-                        textAlign: 'center',
-                      }}>#{order.orderNum}</div>
-                      {order.customerName && (
-                        <div style={{
-                          fontSize: `clamp(0.55rem, ${n <= 5 ? '0.9vh' : '0.7vh'}, 0.85rem)`,
-                          color: BRAND.cream,
-                          fontFamily: "'Open Sans', sans-serif",
-                          textAlign: 'center',
-                          lineHeight: 1.2,
-                        }}>{order.customerName}</div>
-                      )}
-                      {/* Dining badge */}
-                      {order.priority === 'rush' && (
-                        <div style={{
-                          fontSize: `clamp(0.5rem, ${n <= 5 ? '0.8vh' : '0.65vh'}, 0.75rem)`,
-                          background: BRAND.red,
-                          color: BRAND.charcoal,
-                          padding: '1px 4px',
-                          borderRadius: '3px',
-                          fontFamily: "'Oswald', sans-serif",
-                          fontWeight: 700,
-                        }}>ASAP</div>
-                      )}
-                      {!order.isFutureOrder && diningLabel && !order.priority?.includes('rush') && (
-                        <div style={{
-                          fontSize: `clamp(0.5rem, ${n <= 5 ? '0.8vh' : '0.65vh'}, 0.75rem)`,
-                          background: diningColor,
-                          color: BRAND.charcoal,
-                          padding: '1px 4px',
-                          borderRadius: '3px',
-                          fontFamily: "'Oswald', sans-serif",
-                          fontWeight: 700,
-                          textAlign: 'center',
-                        }}>{diningLabel.toUpperCase()}</div>
-                      )}
-                      {order.isFutureOrder && (
-                        <div style={{
-                          fontSize: `clamp(0.5rem, ${n <= 5 ? '0.8vh' : '0.65vh'}, 0.75rem)`,
-                          background: BRAND.blue,
-                          color: BRAND.charcoal,
-                          padding: '1px 4px',
-                          borderRadius: '3px',
-                          fontFamily: "'Oswald', sans-serif",
-                          fontWeight: 700,
-                          textAlign: 'center',
-                        }}>{order.fireAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>
-                      )}
-                      {/* Timer */}
-                      {!order.isFutureOrder && (
-                        <div style={{
-                          fontSize: `clamp(0.8rem, ${n <= 3 ? '1.4vh' : '1.1vh'}, 1.2rem)`,
-                          color: ticketBorderColor,
-                          fontWeight: 700,
-                          fontFamily: "'Oswald', sans-serif",
-                          fontVariantNumeric: 'tabular-nums',
-                        }}>{order.elapsedDisplay}</div>
-                      )}
-                    </div>
+              return (
+                <>
+                  {visibleOrders.map((order, oi) => {
+                    const diningLabel = order.diningOption || '';
+                    const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
+                    const ticketBorderColor = order.priority === 'rush' ? BRAND.red : order.ticketColor;
+                    const sidesText = order.sides.map((side) => {
+                      const sn = typeof side === 'string' ? side : side.name;
+                      const sq = side.quantity || 1;
+                      return sq > 1 ? `${sq}x ${sn}` : sn;
+                    }).join(', ');
 
-                    {/* Right: entrees + sides */}
-                    <div style={{
-                      flex: 1,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      justifyContent: 'center',
-                      padding: '0 2%',
-                    }}>
-                      {order.items.map((item, ii) => (
-                        <div key={ii} style={{
+                    return (
+                      <div key={oi} style={{
+                        display: 'flex',
+                        borderTop: oi > 0 ? `2px solid ${BRAND.gold}40` : 'none',
+                        padding: '6px 0',
+                      }}>
+                        {/* Left sidebar: check info + timer */}
+                        <div style={{
+                          width: '80px',
+                          background: `${ticketBorderColor}15`,
+                          borderLeft: `5px solid ${ticketBorderColor}`,
                           display: 'flex',
+                          flexDirection: 'column',
                           alignItems: 'center',
-                          gap: '3%',
-                          padding: '1px 0',
+                          justifyContent: 'center',
+                          padding: '6px 4px',
+                          flexShrink: 0,
+                          gap: '3px',
                         }}>
-                          <img
-                            src={getSideImageUrl(item.name)}
-                            alt={item.name}
-                            style={{
-                              width: imgSize,
-                              height: imgSize,
-                              objectFit: 'cover',
-                              borderRadius: '50%',
-                              flexShrink: 0,
-                            }}
-                            onError={(e) => { e.target.style.display = 'none'; }}
-                          />
-                          <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontSize: '1rem',
+                            fontWeight: 700,
+                            color: BRAND.bone,
+                            fontFamily: "'Oswald', sans-serif",
+                          }}>#{order.orderNum}</div>
+                          {order.customerName && (
                             <div style={{
-                              fontSize: `clamp(1.2rem, ${nameSize}, 2.5rem)`,
-                              fontWeight: 700,
-                              color: BRAND.bone,
-                              fontFamily: "'Oswald', sans-serif",
-                              textTransform: 'uppercase',
+                              fontSize: '0.7rem',
+                              color: BRAND.cream,
+                              fontFamily: "'Open Sans', sans-serif",
+                              textAlign: 'center',
                               lineHeight: 1.2,
-                            }}>
-                              {item.quantity > 1 && (
-                                <span style={{ color: BRAND.gold, marginRight: '6px' }}>{item.quantity}x</span>
-                              )}
-                              {item.name}
-                            </div>
-                            {item.modifiers?.length > 0 && (
-                              <div style={{
-                                fontSize: `clamp(0.6rem, ${sideTextSize}, 0.9rem)`,
-                                color: `${BRAND.cream}88`,
-                                fontStyle: 'italic',
-                              }}>{item.modifiers.join(', ')}</div>
-                            )}
-                          </div>
+                            }}>{order.customerName}</div>
+                          )}
+                          {order.priority === 'rush' && (
+                            <div style={{
+                              fontSize: '0.65rem',
+                              background: BRAND.red,
+                              color: BRAND.charcoal,
+                              padding: '2px 6px',
+                              borderRadius: '3px',
+                              fontFamily: "'Oswald', sans-serif",
+                              fontWeight: 700,
+                            }}>ASAP</div>
+                          )}
+                          {!order.isFutureOrder && diningLabel && order.priority !== 'rush' && (
+                            <div style={{
+                              fontSize: '0.65rem',
+                              background: diningColor,
+                              color: BRAND.charcoal,
+                              padding: '2px 6px',
+                              borderRadius: '3px',
+                              fontFamily: "'Oswald', sans-serif",
+                              fontWeight: 700,
+                            }}>{diningLabel.toUpperCase()}</div>
+                          )}
+                          {order.isFutureOrder && (
+                            <div style={{
+                              fontSize: '0.65rem',
+                              background: BRAND.blue,
+                              color: BRAND.charcoal,
+                              padding: '2px 6px',
+                              borderRadius: '3px',
+                              fontFamily: "'Oswald', sans-serif",
+                              fontWeight: 700,
+                            }}>{order.fireAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>
+                          )}
+                          {!order.isFutureOrder && (
+                            <div style={{
+                              fontSize: '1.1rem',
+                              color: ticketBorderColor,
+                              fontWeight: 700,
+                              fontFamily: "'Oswald', sans-serif",
+                              fontVariantNumeric: 'tabular-nums',
+                            }}>{order.elapsedDisplay}</div>
+                          )}
                         </div>
-                      ))}
-                      {/* Sides + notes */}
-                      {(sidesText || order.notes) && (
+
+                        {/* Right: entrees + sides — one line per item */}
                         <div style={{
-                          fontSize: `clamp(0.7rem, ${sideTextSize}, 1rem)`,
-                          lineHeight: 1.3,
-                          marginTop: '1px',
-                          paddingLeft: `calc(${imgSize} + 3%)`,
+                          flex: 1,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'center',
+                          padding: '0 12px',
+                          gap: '2px',
                         }}>
-                          {sidesText && (
-                            <span style={{ color: BRAND.cream }}>w/ {sidesText}</span>
-                          )}
-                          {order.notes && (
-                            <span style={{
-                              color: BRAND.gold,
-                              fontWeight: 600,
-                              marginLeft: sidesText ? '8px' : 0,
-                            }}>⚠ {order.notes}</span>
+                          {order.items.map((item, ii) => (
+                            <div key={ii} style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                            }}>
+                              <img
+                                src={getSideImageUrl(item.name)}
+                                alt={item.name}
+                                style={{
+                                  width: '48px',
+                                  height: '48px',
+                                  objectFit: 'cover',
+                                  borderRadius: '50%',
+                                  flexShrink: 0,
+                                }}
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                              />
+                              <div style={{
+                                fontSize: '1.3rem',
+                                fontWeight: 700,
+                                color: BRAND.bone,
+                                fontFamily: "'Oswald', sans-serif",
+                                textTransform: 'uppercase',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}>
+                                {item.quantity > 1 && (
+                                  <span style={{ color: BRAND.gold, marginRight: '6px' }}>{item.quantity}x</span>
+                                )}
+                                {item.name}
+                              </div>
+                              {item.modifiers?.length > 0 && (
+                                <span style={{
+                                  fontSize: '0.85rem',
+                                  color: `${BRAND.cream}88`,
+                                  fontStyle: 'italic',
+                                  whiteSpace: 'nowrap',
+                                  flexShrink: 1,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                }}>{item.modifiers.join(', ')}</span>
+                              )}
+                            </div>
+                          ))}
+                          {(sidesText || order.notes) && (
+                            <div style={{
+                              fontSize: '0.9rem',
+                              lineHeight: 1.3,
+                              paddingLeft: '58px',
+                            }}>
+                              {sidesText && (
+                                <span style={{ color: BRAND.cream }}>w/ {sidesText}</span>
+                              )}
+                              {order.notes && (
+                                <span style={{
+                                  color: BRAND.gold,
+                                  fontWeight: 600,
+                                  marginLeft: sidesText ? '10px' : 0,
+                                }}>⚠ {order.notes}</span>
+                              )}
+                            </div>
                           )}
                         </div>
-                      )}
+                      </div>
+                    );
+                  })}
+                  {hiddenCount > 0 && (
+                    <div style={{
+                      padding: '8px',
+                      textAlign: 'center',
+                      color: BRAND.gold,
+                      fontFamily: "'Oswald', sans-serif",
+                      fontSize: '1rem',
+                      letterSpacing: '1px',
+                    }}>
+                      +{hiddenCount} MORE ORDER{hiddenCount > 1 ? 'S' : ''}
                     </div>
-                  </div>
-                );
-              });
+                  )}
+                </>
+              );
             })()}
           </div>
         </div>
