@@ -171,13 +171,13 @@ export async function POST(request) {
         })),
       };
       const db = getServiceClient();
-      // Fire-and-forget; don't block webhook processing.
-      db.from('lc_debug_payloads').insert({
+      const dbg = await db.from('lc_debug_payloads').insert({
         toast_order_id: toastOrderGuid,
         store_id: storeId,
         shape: shape(toastOrder, 4),
         customer_blobs: customerBlobs,
-      }).then(() => {}, (e) => console.log('debug insert failed:', e?.message));
+      });
+      if (dbg.error) console.log('debug insert error:', dbg.error.message);
     } catch (logErr) {
       console.log('debug log failed:', logErr.message);
     }
