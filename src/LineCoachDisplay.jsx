@@ -235,10 +235,13 @@ export default function LineCoachDisplay({ storeId }) {
             )}
             {(() => {
               const n = orderSequence.length;
-              const imgSize = n <= 3 ? '10vh' : n <= 5 ? '8vh' : '6vh';
-              const nameSize = n <= 3 ? '2vh' : n <= 5 ? '1.7vh' : '1.4vh';
-              const metaSize = n <= 3 ? '1.3vh' : n <= 5 ? '1.1vh' : '0.9vh';
-              const sideTextSize = n <= 3 ? '1.2vh' : n <= 5 ? '1vh' : '0.85vh';
+              // Count total rows (each entree + 1 sides line per order)
+              const totalRows = orderSequence.reduce((sum, o) => sum + o.items.length + (o.sides.length > 0 ? 1 : 0), 0);
+              const rowHeight = Math.min(85 / Math.max(totalRows, 1), 12); // vh per row, max 12vh
+              const imgSize = `${Math.min(rowHeight * 0.9, 8)}vh`;
+              const nameSize = `${Math.min(rowHeight * 0.35, 2.5)}vh`;
+              const metaSize = `${Math.min(rowHeight * 0.2, 1.3)}vh`;
+              const sideTextSize = `${Math.min(rowHeight * 0.18, 1.2)}vh`;
 
               const diningColors = {
                 'dine in': BRAND.green,
@@ -258,9 +261,8 @@ export default function LineCoachDisplay({ storeId }) {
 
                 return (
                   <div key={oi} style={{
-                    flex: 1,
                     display: 'flex',
-                    borderTop: `2px solid ${BRAND.gold}`,
+                    borderTop: oi > 0 ? `2px solid ${BRAND.gold}` : 'none',
                   }}>
                     {/* Left sidebar: check info + timer */}
                     <div style={{
@@ -586,7 +588,7 @@ const s = {
     overflow: 'hidden',
   },
   leftCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-  rightCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  rightCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden', background: BRAND.charcoalDark, borderRadius: '8px', padding: '0 4px' },
   emptyState: {
     textAlign: 'center',
     color: `${BRAND.cream}60`,
