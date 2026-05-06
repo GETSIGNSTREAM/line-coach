@@ -419,11 +419,11 @@ export default function LineCoachDisplay({ storeId }) {
                                   // of being truncated by ellipsis.
                                   flex: 1,
                                   minWidth: 0,
-                                  fontSize: '1.35rem',
-                                  fontWeight: 600,
-                                  color: BRAND.cream,
+                                  fontSize: '1.5rem',
+                                  fontWeight: 700,
+                                  color: BRAND.white,
                                   fontFamily: "'Open Sans', sans-serif",
-                                  lineHeight: 1.25,
+                                  lineHeight: 1.2,
                                   whiteSpace: 'normal',
                                   wordBreak: 'break-word',
                                 }}>{item.modifiers.join(' · ')}</div>
@@ -432,7 +432,7 @@ export default function LineCoachDisplay({ storeId }) {
                           ))}
                           {(sidesText || order.notes) && (
                             <div style={{
-                              fontSize: '1.1rem',
+                              fontSize: '1.4rem',
                               lineHeight: 1.3,
                               paddingLeft: '58px',
                               display: 'flex',
@@ -440,12 +440,12 @@ export default function LineCoachDisplay({ storeId }) {
                               flexWrap: 'wrap',
                             }}>
                               {sidesText && (
-                                <span style={{ color: BRAND.cream, fontWeight: 600 }}>w/ {sidesText}</span>
+                                <span style={{ color: BRAND.white, fontWeight: 700 }}>w/ {sidesText}</span>
                               )}
                               {order.notes && (
                                 <span style={{
                                   color: BRAND.gold,
-                                  fontWeight: 600,
+                                  fontWeight: 700,
                                   marginLeft: sidesText ? '10px' : 0,
                                 }}>⚠ {order.notes}</span>
                               )}
