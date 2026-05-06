@@ -382,7 +382,8 @@ export default function LineCoachDisplay({ storeId }) {
                             <div key={ii} style={{
                               display: 'flex',
                               alignItems: 'center',
-                              gap: '10px',
+                              gap: '12px',
+                              minWidth: 0,
                             }}>
                               <img
                                 src={getSideImageUrl(item.name)}
@@ -403,8 +404,7 @@ export default function LineCoachDisplay({ storeId }) {
                                 fontFamily: "'Oswald', sans-serif",
                                 textTransform: 'uppercase',
                                 whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
+                                flexShrink: 0,
                               }}>
                                 {item.quantity > 1 && (
                                   <span style={{ color: BRAND.gold, marginRight: '6px' }}>{item.quantity}x</span>
@@ -413,12 +413,19 @@ export default function LineCoachDisplay({ storeId }) {
                               </div>
                               {item.modifiers?.length > 0 && (
                                 <div style={{
-                                  fontSize: '1rem',
+                                  // Modifiers fill the leftover space to the right
+                                  // of the entree name. Allowed to wrap so long
+                                  // modifier strings remain fully readable instead
+                                  // of being truncated by ellipsis.
+                                  flex: 1,
+                                  minWidth: 0,
+                                  fontSize: '1.35rem',
+                                  fontWeight: 600,
                                   color: BRAND.cream,
                                   fontFamily: "'Open Sans', sans-serif",
-                                  whiteSpace: 'nowrap',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
+                                  lineHeight: 1.25,
+                                  whiteSpace: 'normal',
+                                  wordBreak: 'break-word',
                                 }}>{item.modifiers.join(' · ')}</div>
                               )}
                             </div>
