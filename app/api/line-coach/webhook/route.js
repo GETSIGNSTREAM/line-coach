@@ -140,6 +140,41 @@ export async function POST(request) {
     const toastOrder = details.order || body.order || body;
     // Order GUID — NOT the webhook event GUID
     const toastOrderGuid = toastOrder.guid || null;
+
+    // TEMPORARY DEBUG: log the shape of one webhook so we can see where
+    // Toast hides customer name. Logs ONLY top-level keys + nested key
+    // names (not values) so PII is not written to the runtime log.
+    // Remove after diagnosis.
+    try {
+      const shape = (obj, depth = 2) => {
+        if (obj == null || typeof obj !== 'object') return typeof obj;
+        if (Array.isArray(obj)) return obj.length === 0 ? '[]' : `[${shape(obj[0], depth - 1)}]`;
+        if (depth <= 0) return '{...}';
+        const out = {};
+        for (const k of Object.keys(obj)) out[k] = shape(obj[k], depth - 1);
+        return out;
+      };
+      console.log('TOAST_PAYLOAD_SHAPE:', JSON.stringify(shape(toastOrder, 4)));
+      // Also log only the customer-related branches with VALUES so we can
+      // see exactly where the name lives. Names are not high-sensitivity
+      // data and these will be removed shortly.
+      const customerBlobs = {
+        order_customer: toastOrder.customer || null,
+        delivery_info: toastOrder.deliveryInfo || null,
+        curbside: toastOrder.curbsidePickupInfo || null,
+        check_count: (toastOrder.checks || []).length,
+        check_customers: (toastOrder.checks || []).map((c) => ({
+          customer: c.customer || null,
+          tabName: c.tabName || null,
+          customerCompany: c.customerCompany || null,
+          displayNumber: c.displayNumber || null,
+          dining_option: c.diningOption || null,
+        })),
+      };
+      console.log('TOAST_CUSTOMER_DEBUG:', JSON.stringify(customerBlobs));
+    } catch (logErr) {
+      console.log('debug log failed:', logErr.message);
+    }
     const restaurantGuid = details.restaurantGuid
       || toastOrder.restaurantGuid
       || request.headers.get('toast-restaurant-external-id')
