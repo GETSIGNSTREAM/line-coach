@@ -25,6 +25,19 @@ function isSkipItem(name) { return SKIP_ITEMS.test(name); }
 
 // ── Name cleanup ────────────────────────────────────────
 
+// ── Priority ranking ────────────────────────────────────
+
+function computePriorityRank(isRush, diningOption) {
+  if (isRush) return 10;
+  const opt = (diningOption || '').toLowerCase();
+  if (opt.includes('dine in') || opt === 'dine-in' || opt === 'dinein' || opt.includes('for here')) return 20;
+  if (opt.includes('takeout') || opt.includes('take out') || opt.includes('pickup') || opt.includes('pick up') || opt.includes('to go') || opt.includes('togo')) return 30;
+  if (opt.includes('delivery') || opt.includes('deliver')) return 40;
+  return 30;
+}
+
+// ── Name cleanup ────────────────────────────────────────
+
 function cleanItemName(name) {
   return name
     .replace(/\s*-\s*PROTEIN:?\s*\+?\d+G?/gi, '')
@@ -223,14 +236,28 @@ export async function POST(request) {
       return NextResponse.json({ status: 'ignored', reason: 'no food items' });
     }
 
+    // Timing: use Toast creation time, or promised time for future orders
+    const toastCreatedAt = toastOrder.createdDate || toastOrder.openedDate || null;
+    const promisedDate = toastOrder.promisedDate || toastOrder.estimatedFulfillmentDate || null;
+    const baseTime = toastCreatedAt ? new Date(toastCreatedAt) : new Date();
+    const fireAt = promisedDate ? new Date(promisedDate) : baseTime;
+    const estimatedReadyAt = new Date(fireAt.getTime() + 10 * 60_000);
+
+    // Priority
+    const isRush = toastOrder.priority === 'RUSH';
+    const priorityRank = computePriorityRank(isRush, diningOption);
+
     const order = {
       store_id: storeId,
       order_number: checkNumber,
       customer_name: customerName,
       items: mains,
       sides: deduplicatedSides,
-      priority: toastOrder.priority === 'RUSH' ? 'rush' : 'normal',
-      fire_at: new Date().toISOString(),
+      priority: isRush ? 'rush' : 'normal',
+      priority_rank: priorityRank,
+      fire_at: fireAt.toISOString(),
+      toast_created_at: toastCreatedAt || new Date().toISOString(),
+      estimated_ready_at: estimatedReadyAt.toISOString(),
       notes: specialInstructions,
       dining_option: diningOption,
     };

@@ -421,12 +421,29 @@ export default function LineCoachAdmin({ storeId }) {
             onChange={(e) => { updateConfig('settings', { ...settings, quality_coach_interval: parseInt(e.target.value) || 30 }); }} />
           <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>seconds between tips</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Side Batch Threshold:</label>
           <input type="number" style={{ ...styles.input, marginBottom: 0, width: '100px' }}
             value={settings.side_batch_threshold || 3}
             onChange={(e) => { updateConfig('settings', { ...settings, side_batch_threshold: parseInt(e.target.value) || 3 }); }} />
           <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>minimum to show batch alert</span>
+        </div>
+        <div style={{ borderTop: `1px solid ${BRAND.charcoalLight}`, paddingTop: '16px', marginTop: '8px', marginBottom: '16px' }}>
+          <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", fontSize: '0.9rem', letterSpacing: '1px', marginBottom: '12px' }}>TICKET TIMERS</div>
+        </div>
+        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Warning (Yellow):</label>
+          <input type="number" style={{ ...styles.input, marginBottom: 0, width: '100px' }}
+            value={settings.ticket_warning_minutes || 5}
+            onChange={(e) => { updateConfig('settings', { ...settings, ticket_warning_minutes: parseInt(e.target.value) || 5 }); }} />
+          <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>minutes until yellow</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Danger (Red):</label>
+          <input type="number" style={{ ...styles.input, marginBottom: 0, width: '100px' }}
+            value={settings.ticket_danger_minutes || 8}
+            onChange={(e) => { updateConfig('settings', { ...settings, ticket_danger_minutes: parseInt(e.target.value) || 8 }); }} />
+          <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>minutes until red</span>
         </div>
       </div>
     );
