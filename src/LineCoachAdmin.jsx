@@ -500,7 +500,11 @@ export default function LineCoachAdmin({ storeId }) {
           <div style={styles.title}>Line Coach Admin</div>
           <div style={styles.subtitle}>Store: {storeId}</div>
         </div>
-        <a href={`/?store=${storeId}`} style={{ ...styles.btnSecondary, textDecoration: 'none' }}>View Display</a>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <a href="/?hub" style={{ ...styles.btnSecondary, textDecoration: 'none' }}>All Stores</a>
+          <a href="/?simulator" style={{ ...styles.btnSecondary, textDecoration: 'none' }}>Simulator</a>
+          <a href={`/?store=${storeId}`} style={{ ...styles.btnSecondary, textDecoration: 'none' }}>View Display</a>
+        </div>
       </div>
 
       <div style={styles.tabs}>
