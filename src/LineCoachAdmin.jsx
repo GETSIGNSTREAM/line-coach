@@ -372,19 +372,81 @@ export default function LineCoachAdmin({ storeId }) {
   }
 
   function renderTipsTab() {
-    const tips = config.quality_tips || [];
+    // Normalize legacy string-only tips into { en, es } so they show up
+    // pre-filled in the EN column. First save upgrades the stored shape.
+    const normalizeTip = (t) => {
+      if (typeof t === 'string') return { en: t, es: '' };
+      if (t && typeof t === 'object') {
+        return {
+          en: typeof t.en === 'string' ? t.en : '',
+          es: typeof t.es === 'string' ? t.es : '',
+        };
+      }
+      return { en: '', es: '' };
+    };
+    const tips = (config.quality_tips || []).map(normalizeTip);
+    const setTip = (i, field, value) => {
+      const next = tips.map((t, idx) => (idx === i ? { ...t, [field]: value } : t));
+      updateConfig('quality_tips', next);
+    };
+    const removeTip = (i) => {
+      updateConfig('quality_tips', tips.filter((_, idx) => idx !== i));
+    };
+    const addTip = () => {
+      updateConfig('quality_tips', [...tips, { en: '', es: '' }]);
+    };
+    const translatedCount = tips.filter((t) => t.es && t.es.trim()).length;
     return (
       <div style={styles.panel}>
         <p style={{ color: BRAND.cream, marginTop: 0 }}>
-          Quality tips are shown on the display during slow periods. One tip per line.
+          Quality tips are shown on the display during slow periods. Each tip
+          can have an English and a Spanish translation — both are shown
+          stacked on the kitchen display. Spanish is optional; leave it blank
+          to show English only.
         </p>
-        <textarea
-          style={styles.textarea}
-          value={tips.join('\n')}
-          rows={tips.length + 2}
-          onChange={(e) => { updateConfig('quality_tips', e.target.value.split('\n').filter((t) => t.trim())); }}
-        />
-        <div style={{ color: BRAND.cream, fontSize: '0.85rem' }}>{tips.length} tips configured</div>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={{ ...styles.th, width: '40px' }}>#</th>
+              <th style={styles.th}>English</th>
+              <th style={styles.th}>Español</th>
+              <th style={{ ...styles.th, width: '90px' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tips.map((tip, i) => (
+              <tr key={i}>
+                <td style={{ ...styles.td, color: BRAND.gold, fontWeight: 700, textAlign: 'center' }}>{i + 1}</td>
+                <td style={styles.td}>
+                  <textarea
+                    style={{ ...styles.textarea, marginBottom: 0, minHeight: '60px' }}
+                    rows={2}
+                    value={tip.en}
+                    onChange={(e) => setTip(i, 'en', e.target.value)}
+                  />
+                </td>
+                <td style={styles.td}>
+                  <textarea
+                    style={{ ...styles.textarea, marginBottom: 0, minHeight: '60px' }}
+                    rows={2}
+                    placeholder="Optional — leave blank for English only"
+                    value={tip.es}
+                    onChange={(e) => setTip(i, 'es', e.target.value)}
+                  />
+                </td>
+                <td style={styles.td}>
+                  <button style={styles.btnSecondary} onClick={() => removeTip(i)}>Remove</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button style={{ ...styles.btnSecondary, marginTop: '12px' }} onClick={addTip}>
+          + Add Tip
+        </button>
+        <div style={{ color: BRAND.cream, fontSize: '0.85rem', marginTop: '8px' }}>
+          {tips.length} tips configured · {translatedCount} translated to Spanish
+        </div>
       </div>
     );
   }

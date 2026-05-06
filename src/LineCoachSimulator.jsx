@@ -15,15 +15,26 @@ const BRAND = {
   terracotta: '#C8654A',
 };
 
+// The simulator is hard-wired to a sandbox store on the server side
+// (see app/api/line-coach/simulator/route.js). This is the same default
+// the API exposes via GET /api/line-coach/simulator → sandbox_store_id;
+// we keep a local fallback so links render before that fetch resolves.
+const FALLBACK_SANDBOX_STORE_ID = 'sandbox';
+
+// eslint-disable-next-line no-unused-vars
 export default function LineCoachSimulator({ storeId }) {
   const [scenarios, setScenarios] = useState([]);
   const [loading, setLoading] = useState(null);
   const [result, setResult] = useState(null);
+  const [sandboxStoreId, setSandboxStoreId] = useState(FALLBACK_SANDBOX_STORE_ID);
 
   useEffect(() => {
     fetch('/api/line-coach/simulator')
       .then((r) => r.json())
-      .then((data) => setScenarios(data.scenarios || []))
+      .then((data) => {
+        setScenarios(data.scenarios || []);
+        if (data.sandbox_store_id) setSandboxStoreId(data.sandbox_store_id);
+      })
       .catch(console.error);
   }, []);
 
@@ -34,7 +45,7 @@ export default function LineCoachSimulator({ storeId }) {
       const res = await fetch('/api/line-coach/simulator', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario: key, store_id: storeId }),
+        body: JSON.stringify({ scenario: key }),
       });
       const data = await res.json();
       setResult(data);
@@ -51,7 +62,7 @@ export default function LineCoachSimulator({ storeId }) {
       const res = await fetch('/api/line-coach/simulator', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'clear', store_id: storeId }),
+        body: JSON.stringify({ action: 'clear' }),
       });
       const data = await res.json();
       setResult(data);
@@ -74,11 +85,13 @@ export default function LineCoachSimulator({ storeId }) {
       <div style={s.header}>
         <div>
           <div style={s.title}>LINE COACH SIMULATOR</div>
-          <div style={s.subtitle}>Store: {storeId} &middot; Test scenarios to fine-tune coaching</div>
+          <div style={s.subtitle}>
+            Sandboxed to <code style={s.code}>{sandboxStoreId}</code> &middot; live stores are never affected
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
-          <a href={`/?store=${storeId}`} target="_blank" rel="noopener" style={s.linkBtn}>
-            Open Display
+          <a href={`/?store=${sandboxStoreId}`} target="_blank" rel="noopener" style={s.linkBtn}>
+            Open Sandbox Display
           </a>
           <button style={s.clearBtn} onClick={clearOrders} disabled={loading === 'clear'}>
             {loading === 'clear' ? 'Clearing...' : 'Clear All Sim Orders'}
@@ -87,10 +100,10 @@ export default function LineCoachSimulator({ storeId }) {
       </div>
 
       <div style={s.instructions}>
-        1. Open the <a href={`/?store=${storeId}`} target="_blank" rel="noopener" style={s.link}>Line Coach display</a> in another window.
+        1. Open the <a href={`/?store=${sandboxStoreId}`} target="_blank" rel="noopener" style={s.link}>sandbox display</a> in another window.
         2. Run a scenario below.
         3. Watch the coaching panels update in real-time.
-        4. Fine-tune cook times, batch sizes, and tips in the <a href={`/?admin&store=${storeId}`} target="_blank" rel="noopener" style={s.link}>admin panel</a>.
+        4. Tune the sandbox menu, sides, and tips in the <a href={`/?admin&store=${sandboxStoreId}`} target="_blank" rel="noopener" style={s.link}>sandbox admin panel</a>.
       </div>
 
       <div style={s.grid}>
@@ -156,6 +169,14 @@ const s = {
     letterSpacing: '3px',
   },
   subtitle: { fontSize: '0.9rem', color: BRAND.cream, marginTop: '4px' },
+  code: {
+    background: BRAND.charcoalDark,
+    color: BRAND.gold,
+    padding: '1px 6px',
+    borderRadius: '3px',
+    fontFamily: "'Courier New', monospace",
+    fontSize: '0.85rem',
+  },
   instructions: {
     background: BRAND.charcoalDark,
     padding: '16px 20px',

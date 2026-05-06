@@ -59,23 +59,24 @@ BEGIN
       {"name":"Buffalo Cauliflower","station":"fryer","cook_time":6,"batch_size":4}
     ]'::jsonb;
 
+    -- Bilingual {en, es} tips. Spanish blank by default; admin fills in.
     tips_data := '[
-      "Check chicken internal temp — must hit 165°F before serving.",
-      "Golden roast color on every bird — no pale skin leaving the pass.",
-      "Rotate birds in the holding cabinet — oldest out first.",
-      "Salsa should be made fresh every shift — taste before service.",
-      "Tortillas should be warm and pliable — check the warmer every 15 min.",
-      "Portion chicken by weight — Quarter Bird is 51+ grams protein.",
-      "Rice should be fluffy, not clumped — stir and check every 20 min.",
-      "Aguas frescas should be fresh-mixed — taste for sweetness balance.",
-      "Wipe down the line between every 5th order — keep it clean.",
-      "Market plates get 2 sides — don''t short the guest.",
-      "Chips should be warm and crispy — fry in small batches.",
-      "Check guac freshness — max 2 hours in the well, then refresh.",
-      "Kale slaw should be dressed to order — don''t let it sit.",
-      "Clear the bump bar every 10 minutes to keep the board accurate.",
-      "Hot hold items max 30 minutes — toss and refresh after that.",
-      "Keep the pass clean — no clutter between expo and window."
+      {"en": "Check chicken internal temp — must hit 165°F before serving.", "es": ""},
+      {"en": "Golden roast color on every bird — no pale skin leaving the pass.", "es": ""},
+      {"en": "Rotate birds in the holding cabinet — oldest out first.", "es": ""},
+      {"en": "Salsa should be made fresh every shift — taste before service.", "es": ""},
+      {"en": "Tortillas should be warm and pliable — check the warmer every 15 min.", "es": ""},
+      {"en": "Portion chicken by weight — Quarter Bird is 51+ grams protein.", "es": ""},
+      {"en": "Rice should be fluffy, not clumped — stir and check every 20 min.", "es": ""},
+      {"en": "Aguas frescas should be fresh-mixed — taste for sweetness balance.", "es": ""},
+      {"en": "Wipe down the line between every 5th order — keep it clean.", "es": ""},
+      {"en": "Market plates get 2 sides — don''t short the guest.", "es": ""},
+      {"en": "Chips should be warm and crispy — fry in small batches.", "es": ""},
+      {"en": "Check guac freshness — max 2 hours in the well, then refresh.", "es": ""},
+      {"en": "Kale slaw should be dressed to order — don''t let it sit.", "es": ""},
+      {"en": "Clear the bump bar every 10 minutes to keep the board accurate.", "es": ""},
+      {"en": "Hot hold items max 30 minutes — toss and refresh after that.", "es": ""},
+      {"en": "Keep the pass clean — no clutter between expo and window.", "es": ""}
     ]'::jsonb;
 
     hold_data := '{"fire_now": 5, "staging": 15, "on_deck": 30}'::jsonb;

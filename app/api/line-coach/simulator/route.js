@@ -2,6 +2,13 @@ import { NextResponse } from 'next/server';
 import { insertOrder, getActiveOrders } from '@/lib/line-coach';
 import { getServiceClient, withRetry } from '@/lib/supabase';
 
+// All simulator activity is sandboxed to a dedicated, non-production
+// store_id. This guarantees test orders can NEVER show up on a real
+// kitchen display. The store row is is_active=false in lc_stores so
+// it does not appear in store pickers; the config row mirrors
+// Hollywood so simulated orders have realistic menu/sides/tips.
+const SANDBOX_STORE_ID = 'sandbox';
+
 // ── Scenario Definitions ────────────────────────────────
 
 const SCENARIOS = {
@@ -231,18 +238,23 @@ const SCENARIOS = {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { scenario, store_id = 'hollywood', action = 'run' } = body;
+    const { scenario, action = 'run' } = body;
+    // Ignore any caller-supplied store_id. The simulator is hard-wired
+    // to the sandbox store so it cannot pollute live kitchen displays.
+    const store_id = SANDBOX_STORE_ID;
 
-    // Clear simulator orders
+    // Clear simulator orders. Cancels ALL active orders in the sandbox
+    // store (not just SIM-% prefixed ones) since the sandbox should
+    // never have non-simulator data anyway.
     if (action === 'clear') {
       const db = getServiceClient();
       await withRetry(() =>
         db.from('lc_orders')
           .update({ status: 'cancelled' })
           .eq('store_id', store_id)
-          .like('order_number', 'SIM-%')
+          .not('status', 'in', '("complete","cancelled")')
       );
-      return NextResponse.json({ status: 'cleared' });
+      return NextResponse.json({ status: 'cleared', store_id });
     }
 
     // Run a scenario
@@ -261,13 +273,13 @@ export async function POST(request) {
     const scenarioData = SCENARIOS[scenario];
     const results = [];
 
-    // Clear previous sim orders first
+    // Clear previous sandbox orders first so each scenario starts clean.
     const db = getServiceClient();
     await withRetry(() =>
       db.from('lc_orders')
         .update({ status: 'cancelled' })
         .eq('store_id', store_id)
-        .like('order_number', 'SIM-%')
+        .not('status', 'in', '("complete","cancelled")')
     );
 
     // Insert orders with staggered timestamps
@@ -305,6 +317,7 @@ export async function POST(request) {
 
     return NextResponse.json({
       status: 'ok',
+      store_id,
       scenario: scenarioData.name,
       description: scenarioData.description,
       ordersInserted: results.filter((r) => r.success).length,
@@ -326,5 +339,5 @@ export async function GET() {
     orderCount: s.orders.length,
   }));
 
-  return NextResponse.json({ scenarios });
+  return NextResponse.json({ scenarios, sandbox_store_id: SANDBOX_STORE_ID });
 }

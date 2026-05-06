@@ -3,6 +3,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
+// Normalize a quality tip into { en, es }. Mirrors lib/line-coach.js so
+// the client doesn't pull in server-only deps. Accepts legacy string tips.
+function normalizeTip(tip) {
+  if (typeof tip === 'string') return { en: tip, es: '' };
+  if (tip && typeof tip === 'object') {
+    return {
+      en: typeof tip.en === 'string' ? tip.en : '',
+      es: typeof tip.es === 'string' ? tip.es : '',
+    };
+  }
+  return { en: '', es: '' };
+}
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
@@ -100,7 +113,12 @@ export default function LineCoachDisplay({ storeId }) {
 
   const menuItems = config?.menu_items || [];
   const configSides = config?.sides || [];
-  const tips = config?.quality_tips || [];
+  // Bilingual tips: array of { en, es }. Filter out fully empty tips so
+  // the rotation never lands on a blank screen, and so legacy string-only
+  // configs continue to work via normalizeTip.
+  const tips = (config?.quality_tips || [])
+    .map(normalizeTip)
+    .filter((t) => (t.en && t.en.trim()) || (t.es && t.es.trim()));
   const isSlowPeriod = orders.length === 0;
 
   // Side Batching: aggregate sides across all active orders
@@ -205,12 +223,29 @@ export default function LineCoachDisplay({ storeId }) {
 
   if (isSlowPeriod && tips.length > 0) {
     const tip = tips[qualityTipIndex % tips.length];
+    const enText = tip.en && tip.en.trim();
+    const esText = tip.es && tip.es.trim();
     return (
       <div style={s.container}>
+        <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
         <Header now={now} orderCount={0} />
         <div style={s.qualityCoach}>
           <div style={s.qualityLabel}>QUALITY COACH</div>
-          <div style={s.qualityTip}>{tip}</div>
+          <div style={s.qualityTipBlock} key={qualityTipIndex}>
+            {enText && (
+              <div style={s.qualityLangSection}>
+                <div style={s.qualityLangLabel}>ENGLISH</div>
+                <div style={s.qualityTipEn}>{enText}</div>
+              </div>
+            )}
+            {enText && esText && <div style={s.qualityDivider} />}
+            {esText && (
+              <div style={s.qualityLangSection}>
+                <div style={{ ...s.qualityLangLabel, color: BRAND.sage }}>ESPAÑOL</div>
+                <div style={s.qualityTipEs}>{esText}</div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -512,12 +547,28 @@ export default function LineCoachDisplay({ storeId }) {
           </div>
 
           {/* Quick Tip */}
-          {tips.length > 0 && (
-            <div style={s.quickTip}>
-              <div style={s.quickTipLabel}>TIP</div>
-              <div style={s.quickTipText}>{tips[qualityTipIndex % tips.length]}</div>
-            </div>
-          )}
+          {tips.length > 0 && (() => {
+            const tip = tips[qualityTipIndex % tips.length];
+            const enText = tip.en && tip.en.trim();
+            const esText = tip.es && tip.es.trim();
+            return (
+              <div style={s.quickTip}>
+                <div style={s.quickTipLabel}>TIP</div>
+                {enText && (
+                  <>
+                    <div style={s.quickTipLangLabel}>EN</div>
+                    <div style={s.quickTipText}>{enText}</div>
+                  </>
+                )}
+                {esText && (
+                  <>
+                    <div style={{ ...s.quickTipLangLabel, color: BRAND.gold, marginTop: enText ? '10px' : 0 }}>ES</div>
+                    <div style={s.quickTipTextEs}>{esText}</div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
@@ -638,34 +689,89 @@ const s = {
     marginBottom: '8px',
     fontFamily: "'Oswald', sans-serif",
   },
+  quickTipLangLabel: {
+    fontSize: '0.65rem',
+    color: BRAND.sage,
+    fontWeight: 700,
+    letterSpacing: '2px',
+    marginBottom: '3px',
+    fontFamily: "'Oswald', sans-serif",
+    opacity: 0.8,
+  },
   quickTipText: {
     fontSize: '0.95rem',
     color: BRAND.cream,
     lineHeight: 1.5,
     fontFamily: "'Playfair Display', Georgia, serif",
   },
-  // Quality Coach
+  quickTipTextEs: {
+    fontSize: '0.85rem',
+    color: BRAND.bone,
+    lineHeight: 1.5,
+    fontFamily: "'Playfair Display', Georgia, serif",
+    opacity: 0.92,
+  },
+  // Quality Coach — fills the screen below the header so tips are
+  // readable from anywhere on the line. EN stacked on top of ES.
   qualityCoach: {
-    background: BRAND.charcoalDark,
-    border: `2px solid ${BRAND.gold}`,
-    borderRadius: '12px',
-    padding: '40px',
+    minHeight: 'calc(100vh - 60px)',
+    padding: '4vh 6vw',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
     textAlign: 'center',
-    maxWidth: '700px',
-    margin: '80px auto',
+    boxSizing: 'border-box',
   },
   qualityLabel: {
-    fontSize: '0.9rem',
+    fontSize: 'clamp(1rem, 1.6vw, 1.6rem)',
+    color: BRAND.gold,
+    fontWeight: 700,
+    letterSpacing: '4px',
+    fontFamily: "'Oswald', sans-serif",
+    marginBottom: 'clamp(2vh, 4vh, 6vh)',
+  },
+  qualityTipBlock: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    gap: 'clamp(2vh, 3vh, 5vh)',
+    animation: 'lcQualityFade 350ms ease-out',
+  },
+  qualityLangSection: {
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 'clamp(0.8vh, 1.2vh, 2vh)',
+  },
+  qualityLangLabel: {
+    fontSize: 'clamp(0.9rem, 1.2vw, 1.4rem)',
     color: BRAND.gold,
     fontWeight: 700,
     letterSpacing: '3px',
-    marginBottom: '20px',
     fontFamily: "'Oswald', sans-serif",
+    opacity: 0.85,
   },
-  qualityTip: {
-    fontSize: '1.5rem',
-    lineHeight: 1.6,
+  qualityTipEn: {
+    fontSize: 'clamp(2.4rem, 5.5vw, 5.5rem)',
+    lineHeight: 1.2,
     color: BRAND.bone,
     fontFamily: "'Playfair Display', Georgia, serif",
+    maxWidth: '90vw',
+  },
+  qualityTipEs: {
+    fontSize: 'clamp(2rem, 4.8vw, 4.8rem)',
+    lineHeight: 1.2,
+    color: BRAND.cream,
+    fontFamily: "'Playfair Display', Georgia, serif",
+    maxWidth: '90vw',
+  },
+  qualityDivider: {
+    width: '30%',
+    height: '1px',
+    background: `${BRAND.gold}55`,
   },
 };
