@@ -67,6 +67,93 @@ CREATE TABLE IF NOT EXISTS lc_devices (
 CREATE INDEX IF NOT EXISTS idx_lc_devices_store ON lc_devices (store_id);
 
 -- ══════════════════════════════════════════════════════════
+-- Webhook log (diagnostics for inbound Toast webhooks)
+-- ══════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS lc_webhook_log (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  store_id TEXT,
+  status TEXT NOT NULL,
+  http_status INT NOT NULL,
+  event_type TEXT,
+  order_id UUID,
+  toast_order_id TEXT,
+  error_message TEXT,
+  payload JSONB,
+  ip TEXT,
+  duration_ms INT
+);
+
+CREATE INDEX IF NOT EXISTS idx_lc_webhook_log_created ON lc_webhook_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lc_webhook_log_store_created ON lc_webhook_log (store_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lc_webhook_log_status ON lc_webhook_log (status);
+
+-- ══════════════════════════════════════════════════════════
+-- Order archive (cold storage for old bumped/cancelled rows)
+-- ══════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS lc_orders_archive (
+  id UUID PRIMARY KEY,
+  store_id TEXT NOT NULL,
+  toast_order_id TEXT,
+  order_number TEXT,
+  items JSONB NOT NULL DEFAULT '[]',
+  sides JSONB NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  fire_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  bumped_at TIMESTAMPTZ,
+  notes TEXT,
+  dining_option TEXT,
+  customer_name TEXT,
+  archived_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lc_orders_archive_store_archived ON lc_orders_archive (store_id, archived_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lc_orders_archive_toast_id ON lc_orders_archive (toast_order_id);
+
+-- ══════════════════════════════════════════════════════════
+-- Retention helpers (callable from admin or pg_cron)
+-- ══════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION lc_purge_old_logs(days_to_keep INT DEFAULT 30)
+RETURNS INT AS $$
+DECLARE deleted_count INT;
+BEGIN
+  WITH del AS (
+    DELETE FROM lc_webhook_log
+    WHERE created_at < now() - (days_to_keep || ' days')::INTERVAL
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO deleted_count FROM del;
+  RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION lc_archive_orders(days_to_keep INT DEFAULT 7)
+RETURNS INT AS $$
+DECLARE moved_count INT;
+BEGIN
+  WITH moved AS (
+    INSERT INTO lc_orders_archive
+      (id, store_id, toast_order_id, order_number, items, sides, status, priority, fire_at, created_at, bumped_at, notes, dining_option, customer_name)
+    SELECT id, store_id, toast_order_id, order_number, items, sides, status, priority, fire_at, created_at, bumped_at, notes, dining_option, customer_name
+    FROM lc_orders
+    WHERE status IN ('bumped', 'cancelled')
+      AND created_at < now() - (days_to_keep || ' days')::INTERVAL
+    ON CONFLICT (id) DO NOTHING
+    RETURNING id
+  ),
+  del AS (
+    DELETE FROM lc_orders
+    WHERE id IN (SELECT id FROM moved)
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO moved_count FROM del;
+  RETURN moved_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ══════════════════════════════════════════════════════════
 -- Enable Realtime on lc_orders
 -- ══════════════════════════════════════════════════════════
 ALTER PUBLICATION supabase_realtime ADD TABLE lc_orders;
@@ -77,11 +164,15 @@ ALTER PUBLICATION supabase_realtime ADD TABLE lc_orders;
 ALTER TABLE lc_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lc_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lc_devices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lc_webhook_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lc_orders_archive ENABLE ROW LEVEL SECURITY;
 
 -- Allow service role full access (API routes use service key)
 CREATE POLICY "Service role full access" ON lc_orders FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Service role full access" ON lc_config FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Service role full access" ON lc_devices FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access" ON lc_webhook_log FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access" ON lc_orders_archive FOR ALL USING (true) WITH CHECK (true);
 
 -- Allow anon read on orders (for realtime subscriptions on display)
 CREATE POLICY "Anon can read orders" ON lc_orders FOR SELECT USING (true);

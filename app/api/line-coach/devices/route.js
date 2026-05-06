@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { registerDevice, getDevices } from '@/lib/line-coach';
+import { registerDevice, getDevices, deleteDevice } from '@/lib/line-coach';
+import { requireAdmin } from '@/lib/auth';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
@@ -55,4 +56,27 @@ export async function GET(request) {
   }
 
   return NextResponse.json({ devices: data });
+}
+
+export async function DELETE(request) {
+  const rlKey = getRateLimitKey(request, 'admin');
+  const rl = checkRateLimit(rlKey, RATE_LIMITS.admin.limit, RATE_LIMITS.admin.windowMs);
+  const rlRes = rateLimitResponse(rl);
+  if (rlRes) return rlRes;
+
+  const authResult = requireAdmin(request);
+  if (authResult instanceof Response) return authResult;
+
+  const { searchParams } = new URL(request.url);
+  const deviceId = searchParams.get('device_id');
+  if (!deviceId) {
+    return NextResponse.json({ error: 'device_id is required' }, { status: 400 });
+  }
+
+  const { error } = await deleteDevice(deviceId);
+  if (error) {
+    console.error('Failed to delete device:', error);
+    return NextResponse.json({ error: 'Failed to delete device' }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true });
 }

@@ -99,17 +99,39 @@ export default function LineCoachDisplay({ storeId }) {
   }, [config]);
 
   useEffect(() => {
-    const deviceId = `display-${storeId}-${Math.random().toString(36).slice(2, 8)}`;
-    const heartbeat = () => {
+    const storageKey = `lc-device-id-${storeId}`;
+    let deviceId = null;
+    try {
+      deviceId = localStorage.getItem(storageKey);
+    } catch { /* private mode / SSR */ }
+    if (!deviceId) {
+      deviceId = `display-${storeId}-${Math.random().toString(36).slice(2, 10)}`;
+      try { localStorage.setItem(storageKey, deviceId); } catch { /* ignore */ }
+    }
+
+    let cancelled = false;
+    const register = () =>
       fetch('/api/line-coach/devices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_id: deviceId, store_id: storeId, device_type: 'kds' }),
       }).catch(() => {});
+
+    const heartbeat = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch('/api/line-coach/devices/heartbeat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_id: deviceId }),
+        });
+        if (res.status === 404) await register();
+      } catch { /* network blip — next tick will retry */ }
     };
-    heartbeat();
+
+    register().then(heartbeat);
     const interval = setInterval(heartbeat, 60_000);
-    return () => clearInterval(interval);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [storeId]);
 
   // ── Audio alerts ────────────────────────────────────
