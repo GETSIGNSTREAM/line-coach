@@ -141,6 +141,15 @@ export async function POST(request) {
     const toastOrder = details.order || body.order || body;
     // Order GUID — NOT the webhook event GUID
     const toastOrderGuid = toastOrder.guid || null;
+    const restaurantGuid = details.restaurantGuid
+      || toastOrder.restaurantGuid
+      || request.headers.get('toast-restaurant-external-id')
+      || '';
+    const storeId = resolveStoreId(restaurantGuid);
+
+    if (!toastOrderGuid) {
+      return NextResponse.json({ status: 'ignored', reason: 'no order guid' });
+    }
 
     // TEMPORARY DEBUG: persist a SHAPE of one webhook payload + the
     // customer/dining-option branches into a Supabase debug table so we
@@ -180,15 +189,6 @@ export async function POST(request) {
       if (dbg.error) console.log('debug insert error:', dbg.error.message);
     } catch (logErr) {
       console.log('debug log failed:', logErr.message);
-    }
-    const restaurantGuid = details.restaurantGuid
-      || toastOrder.restaurantGuid
-      || request.headers.get('toast-restaurant-external-id')
-      || '';
-    const storeId = resolveStoreId(restaurantGuid);
-
-    if (!toastOrderGuid) {
-      return NextResponse.json({ status: 'ignored', reason: 'no order guid' });
     }
 
     // ── Detect completed/voided → auto-bump ─────────────
