@@ -131,32 +131,71 @@ export default function LineCoachDisplay({ storeId }) {
       });
   }
 
-  // Fire Sequencing: group by order, sorted by priority then longest cook time
+  // Timer thresholds from config
+  const warningMin = config?.settings?.ticket_warning_minutes || 5;
+  const dangerMin = config?.settings?.ticket_danger_minutes || 8;
+
+  function getTicketColor(elapsedMinutes) {
+    if (elapsedMinutes >= dangerMin) return BRAND.red;
+    if (elapsedMinutes >= warningMin) return BRAND.yellow;
+    return BRAND.green;
+  }
+
+  function formatElapsed(ms) {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  }
+
+  // Fire Sequencing: group by order, sorted by priority_rank, with elapsed time
   function getOrderSequence() {
-    const orderList = orders.map((order) => {
-      let maxCookTime = 0;
-      const items = (order.items || []).map((item) => {
-        const menuMatch = menuItems.find((m) => m.name === item.name);
-        const cookTime = menuMatch?.cook_time || 0;
-        if (cookTime > maxCookTime) maxCookTime = cookTime;
-        return { ...item, cookTime, station: menuMatch?.station || 'line' };
+    const tenMinFromNow = now.getTime() + 10 * 60_000;
+
+    const orderList = orders
+      .filter((order) => {
+        // Hide future orders until 10 min before fire_at
+        const fireAt = new Date(order.fire_at || order.created_at).getTime();
+        return fireAt <= tenMinFromNow;
+      })
+      .map((order) => {
+        let maxCookTime = 0;
+        const items = (order.items || []).map((item) => {
+          const menuMatch = menuItems.find((m) => m.name === item.name);
+          const cookTime = menuMatch?.cook_time || 0;
+          if (cookTime > maxCookTime) maxCookTime = cookTime;
+          return { ...item, cookTime, station: menuMatch?.station || 'line' };
+        });
+
+        const orderTime = new Date(order.toast_created_at || order.fire_at || order.created_at);
+        const elapsedMs = now.getTime() - orderTime.getTime();
+        const elapsedMinutes = elapsedMs / 60_000;
+        const fireAt = new Date(order.fire_at || order.created_at);
+        const isFutureOrder = fireAt.getTime() > now.getTime();
+
+        return {
+          orderNum: order.order_number || '—',
+          customerName: order.customer_name || null,
+          items,
+          sides: order.sides || [],
+          notes: order.notes || null,
+          diningOption: order.dining_option || null,
+          priority: order.priority || 'normal',
+          priorityRank: order.priority_rank || 30,
+          maxCookTime,
+          elapsedMs,
+          elapsedMinutes,
+          elapsedDisplay: formatElapsed(elapsedMs),
+          ticketColor: getTicketColor(elapsedMinutes),
+          isFutureOrder,
+          fireAt,
+        };
       });
-      return {
-        orderNum: order.order_number || '—',
-        customerName: order.customer_name || null,
-        items,
-        sides: order.sides || [],
-        notes: order.notes || null,
-        diningOption: order.dining_option || null,
-        priority: order.priority || 'normal',
-        maxCookTime,
-      };
-    });
-    // Rush first, then longest cook time
+
+    // Sort by priority_rank (ASAP 10 → Dine In 20 → Takeout 30 → Delivery 40), then oldest first
     orderList.sort((a, b) => {
-      if (a.priority === 'rush' && b.priority !== 'rush') return -1;
-      if (b.priority === 'rush' && a.priority !== 'rush') return 1;
-      return b.maxCookTime - a.maxCookTime;
+      if (a.priorityRank !== b.priorityRank) return a.priorityRank - b.priorityRank;
+      return a.fireAt - b.fireAt;
     });
     return orderList;
   }
@@ -223,10 +262,10 @@ export default function LineCoachDisplay({ storeId }) {
                     flexDirection: 'column',
                     justifyContent: 'center',
                     padding: '0 2%',
-                    borderLeft: order.priority === 'rush' ? `4px solid ${BRAND.red}` : `4px solid ${BRAND.charcoalLight}`,
+                    borderLeft: `4px solid ${order.priority === 'rush' ? BRAND.red : order.ticketColor}`,
                     borderBottom: `1px solid ${BRAND.charcoalLight}`,
                   }}>
-                    {/* Entrees — image, qty + name + sides + notes all together */}
+                    {/* Entrees — image, qty + name + badges + timer */}
                     {order.items.map((item, ii) => (
                       <div key={ii} style={{
                         display: 'flex',
@@ -247,7 +286,6 @@ export default function LineCoachDisplay({ storeId }) {
                           onError={(e) => { e.target.style.display = 'none'; }}
                         />
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          {/* Name + qty + badges */}
                           <div style={{
                             fontSize: `clamp(1.2rem, ${nameSize}, 2.5rem)`,
                             fontWeight: 700,
@@ -264,7 +302,6 @@ export default function LineCoachDisplay({ storeId }) {
                               <span style={{ color: BRAND.gold }}>{item.quantity}x</span>
                             )}
                             {item.name}
-                            {/* Show badges only on first item of order */}
                             {ii === 0 && (
                               <>
                                 <span style={{
@@ -280,9 +317,18 @@ export default function LineCoachDisplay({ storeId }) {
                                     color: BRAND.white,
                                     padding: '1px 6px',
                                     borderRadius: '3px',
-                                  }}>RUSH</span>
+                                  }}>ASAP</span>
                                 )}
-                                {diningLabel && (
+                                {order.isFutureOrder && (
+                                  <span style={{
+                                    fontSize: '0.55em',
+                                    background: BRAND.blue,
+                                    color: BRAND.white,
+                                    padding: '1px 6px',
+                                    borderRadius: '3px',
+                                  }}>SCHEDULED {order.fireAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                                )}
+                                {!order.isFutureOrder && diningLabel && (
                                   <span style={{
                                     fontSize: '0.55em',
                                     background: diningColor,
@@ -291,10 +337,21 @@ export default function LineCoachDisplay({ storeId }) {
                                     borderRadius: '3px',
                                   }}>{diningLabel.toUpperCase()}</span>
                                 )}
+                                {/* Elapsed timer */}
+                                {!order.isFutureOrder && (
+                                  <span style={{
+                                    fontSize: '0.55em',
+                                    color: order.ticketColor,
+                                    fontWeight: 700,
+                                    fontFamily: "'Oswald', sans-serif",
+                                    fontVariantNumeric: 'tabular-nums',
+                                  }}>
+                                    {order.elapsedDisplay}
+                                  </span>
+                                )}
                               </>
                             )}
                           </div>
-                          {/* Sides + notes under entree name */}
                           {ii === order.items.length - 1 && (sidesText || order.notes) && (
                             <div style={{
                               fontSize: `clamp(0.7rem, ${sideTextSize}, 1rem)`,

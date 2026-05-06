@@ -276,6 +276,14 @@ export async function POST(request) {
       const staggerMs = i * 15_000; // 15 seconds apart
       const fireAt = new Date(Date.now() - staggerMs);
 
+      // Compute priority rank
+      const isRush = orderDef.priority === 'rush';
+      const dOpt = (orderDef.dining_option || '').toLowerCase();
+      let priorityRank = 30;
+      if (isRush) priorityRank = 10;
+      else if (dOpt.includes('dine in')) priorityRank = 20;
+      else if (dOpt.includes('delivery')) priorityRank = 40;
+
       const order = {
         store_id,
         order_number: orderDef.order_number,
@@ -283,7 +291,10 @@ export async function POST(request) {
         items: orderDef.items,
         sides: orderDef.sides,
         priority: orderDef.priority || 'normal',
+        priority_rank: priorityRank,
         fire_at: fireAt.toISOString(),
+        toast_created_at: fireAt.toISOString(),
+        estimated_ready_at: new Date(fireAt.getTime() + 10 * 60_000).toISOString(),
         notes: orderDef.notes || null,
         dining_option: orderDef.dining_option || null,
       };
