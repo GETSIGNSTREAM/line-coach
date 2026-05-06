@@ -234,9 +234,9 @@ export default function LineCoachDisplay({ storeId }) {
             )}
             {(() => {
               const diningColors = {
-                'dine in': BRAND.green,
+                'dine in': BRAND.gold,
                 'takeout': BRAND.blue,
-                'delivery': BRAND.terracotta,
+                'delivery': BRAND.cream,
               };
 
               // Max 8 orders visible — enforce minimum readable size
@@ -293,7 +293,7 @@ export default function LineCoachDisplay({ storeId }) {
                           {order.priority === 'rush' && (
                             <div style={{
                               fontSize: '0.65rem',
-                              background: BRAND.red,
+                              background: BRAND.white,
                               color: BRAND.charcoal,
                               padding: '2px 6px',
                               borderRadius: '3px',
@@ -362,7 +362,7 @@ export default function LineCoachDisplay({ storeId }) {
                                 onError={(e) => { e.target.style.display = 'none'; }}
                               />
                               <div style={{
-                                fontSize: '1.3rem',
+                                fontSize: '1.5rem',
                                 fontWeight: 700,
                                 color: BRAND.bone,
                                 fontFamily: "'Oswald', sans-serif",
@@ -377,26 +377,28 @@ export default function LineCoachDisplay({ storeId }) {
                                 {item.name}
                               </div>
                               {item.modifiers?.length > 0 && (
-                                <span style={{
-                                  fontSize: '0.85rem',
-                                  color: `${BRAND.cream}88`,
-                                  fontStyle: 'italic',
+                                <div style={{
+                                  fontSize: '1rem',
+                                  color: BRAND.cream,
+                                  fontFamily: "'Open Sans', sans-serif",
                                   whiteSpace: 'nowrap',
-                                  flexShrink: 1,
                                   overflow: 'hidden',
                                   textOverflow: 'ellipsis',
-                                }}>{item.modifiers.join(', ')}</span>
+                                }}>{item.modifiers.join(' · ')}</div>
                               )}
                             </div>
                           ))}
                           {(sidesText || order.notes) && (
                             <div style={{
-                              fontSize: '0.9rem',
+                              fontSize: '1.1rem',
                               lineHeight: 1.3,
                               paddingLeft: '58px',
+                              display: 'flex',
+                              gap: '12px',
+                              flexWrap: 'wrap',
                             }}>
                               {sidesText && (
-                                <span style={{ color: BRAND.cream }}>w/ {sidesText}</span>
+                                <span style={{ color: BRAND.cream, fontWeight: 600 }}>w/ {sidesText}</span>
                               )}
                               {order.notes && (
                                 <span style={{
