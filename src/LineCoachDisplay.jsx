@@ -470,6 +470,332 @@ export default function LineCoachDisplay({ storeId }) {
   const batchedSides = getBatchedSides();
   const orderSequence = getOrderSequence();
 
+  // Density tier — adapts the layout to current order load.
+  //   1 visible       → focus mode (giant photo + entree-specific coach tip)
+  //   2-3 visible     → comfortable mode (existing layout, ~50% taller rows)
+  //   4+ visible      → rush mode (today's dense layout, unchanged)
+  // Future-only orders are excluded from focus mode by design — we don't
+  // want to lock the screen onto a dish 4 hours before it fires.
+  const visibleNow = orderSequence.filter((o) => !o.isFutureOrder);
+  const density = visibleNow.length === 1 ? 'focus'
+    : (visibleNow.length >= 2 && visibleNow.length <= 3) ? 'comfortable'
+    : 'rush';
+
+  // ── Focus mode ──────────────────────────────────────
+  // Single order on the board: huge photo on the left, big readable
+  // detail in the middle, entree-specific coaching on the right.
+  // Hides side-batching panel and quick-tip sidebar since one order
+  // doesn't need the chrome.
+  if (density === 'focus') {
+    const order = visibleNow[0];
+    // Pick the "primary" item for the photo + coach tip = longest-cook-
+    // time item (the most attention-demanding dish on the ticket).
+    const primaryItem = [...order.items].sort((a, b) => (b.cookTime || 0) - (a.cookTime || 0))[0] || order.items[0];
+    const secondaryItems = order.items.filter((it) => it !== primaryItem);
+    const primaryMenu = menuItems.find((m) => m.name === primaryItem?.name);
+    const primaryCoachTip = primaryMenu?.coach_tip ? normalizeTip(primaryMenu.coach_tip) : null;
+    // Fallback to a rotating store-level quality tip when the focused
+    // item has no coach_tip configured yet.
+    const fallbackTip = (!primaryCoachTip || (!primaryCoachTip.en && !primaryCoachTip.es))
+      ? (tips.length > 0 ? tips[qualityTipIndex % tips.length] : null)
+      : null;
+    const tipToShow = primaryCoachTip && (primaryCoachTip.en || primaryCoachTip.es)
+      ? primaryCoachTip
+      : fallbackTip;
+    const tipEn = tipToShow?.en && tipToShow.en.trim();
+    const tipEs = tipToShow?.es && tipToShow.es.trim();
+
+    const ticketBorderColor = order.priority === 'rush' ? BRAND.red : order.ticketColor;
+    const diningColors = {
+      'dine in': BRAND.gold,
+      'takeout': BRAND.blue,
+      'delivery': BRAND.cream,
+    };
+    const diningLabel = order.diningOption || '';
+    const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
+    const sidesText = order.sides.map((side) => {
+      const sn = typeof side === 'string' ? side : side.name;
+      const sq = side.quantity || 1;
+      return sq > 1 ? `${sq}x ${sn}` : sn;
+    }).join(', ');
+    const allergyNote = isAllergyNote(order.notes) ? order.notes : null;
+    const inlineNote = allergyNote ? null : order.notes;
+    const sourceLabel = order.priority === 'rush' ? 'ASAP' : (diningLabel ? diningLabel.toUpperCase() : null);
+
+    return (
+      <div style={s.container}>
+        <style>{`
+          @keyframes lcAllergyPulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.85); }
+            50%      { box-shadow: 0 0 0 8px rgba(214, 69, 69, 0); }
+          }
+          @keyframes lcFocusFade { from { opacity: 0; } to { opacity: 1; } }
+        `}</style>
+        <Header now={now} orderCount={1} />
+        {showAudioUnlock && <AudioUnlockBanner onUnlock={unlockAudio} />}
+
+        {allergyNote && (
+          <div style={{
+            background: BRAND.red,
+            color: BRAND.white,
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 800,
+            letterSpacing: '3px',
+            textTransform: 'uppercase',
+            fontSize: 'clamp(1.6rem, 2.5vw, 2.4rem)',
+            padding: '14px 24px',
+            margin: '12px 16px 0 16px',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '14px',
+            animation: 'lcAllergyPulse 1.4s ease-in-out infinite',
+          }}>
+            <span style={{ fontSize: '2rem' }}>⚠</span>
+            <span>ALLERGY:</span>
+            <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 700 }}>{allergyNote}</span>
+          </div>
+        )}
+
+        {/* Top strip: order #, customer, dining, timer */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '24px',
+          padding: '12px 24px 8px',
+          borderBottom: `2px solid ${BRAND.gold}40`,
+          margin: '0 16px',
+        }}>
+          <div style={{
+            background: ticketBorderColor,
+            color: BRAND.charcoal,
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 800,
+            fontSize: 'clamp(1.6rem, 2.4vw, 2.4rem)',
+            padding: '8px 18px',
+            borderRadius: '6px',
+            letterSpacing: '2px',
+          }}>#{order.orderNum}</div>
+          {order.customerName && (
+            <div style={{
+              fontSize: 'clamp(1.4rem, 2.2vw, 2rem)',
+              color: BRAND.bone,
+              fontFamily: "'Open Sans', sans-serif",
+              fontWeight: 600,
+            }}>{order.customerName}</div>
+          )}
+          {sourceLabel && (
+            <div style={{
+              background: order.priority === 'rush' ? BRAND.red : diningColor,
+              color: BRAND.charcoal,
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              fontSize: 'clamp(1rem, 1.4vw, 1.4rem)',
+              padding: '6px 14px',
+              borderRadius: '4px',
+              letterSpacing: '2px',
+            }}>{sourceLabel}</div>
+          )}
+          <div style={{ flex: 1 }} />
+          <div style={{
+            fontSize: 'clamp(1.8rem, 3vw, 3rem)',
+            color: ticketBorderColor,
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 700,
+            fontVariantNumeric: 'tabular-nums',
+          }}>{order.elapsedDisplay}</div>
+        </div>
+
+        {/* Two-column body: photo + coach tip ─────────── */}
+        <div style={{
+          display: 'flex',
+          gap: '24px',
+          padding: '16px',
+          minHeight: 'calc(100vh - 200px)',
+          animation: 'lcFocusFade 350ms ease-out',
+        }}>
+          {/* Left: photo + entree name + sides + modifiers */}
+          <div style={{
+            flex: '1 1 55%',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '18px',
+            minWidth: 0,
+          }}>
+            <img
+              src={getSideImageUrl(primaryItem?.name || '', menuItems, configSides)}
+              alt={primaryItem?.name || ''}
+              style={{
+                width: '100%',
+                aspectRatio: '4 / 3',
+                maxHeight: '46vh',
+                objectFit: 'cover',
+                borderRadius: '12px',
+                background: BRAND.charcoalDark,
+              }}
+              onError={(e) => { e.target.style.display = 'none'; }}
+            />
+            <div style={{
+              fontSize: 'clamp(2.4rem, 4vw, 4.5rem)',
+              fontWeight: 800,
+              color: BRAND.bone,
+              fontFamily: "'Oswald', sans-serif",
+              textTransform: 'uppercase',
+              lineHeight: 1.1,
+            }}>
+              {primaryItem?.quantity > 1 && (
+                <span style={{ color: BRAND.gold, marginRight: '14px' }}>{primaryItem.quantity}x</span>
+              )}
+              {primaryItem?.name}
+            </div>
+            {primaryItem?.modifiers?.length > 0 && (
+              <div style={{
+                fontSize: 'clamp(1.4rem, 2.2vw, 2.2rem)',
+                fontWeight: 700,
+                color: BRAND.white,
+                fontFamily: "'Open Sans', sans-serif",
+                lineHeight: 1.25,
+              }}>{primaryItem.modifiers.join(' · ')}</div>
+            )}
+            {sidesText && (
+              <div style={{
+                fontSize: 'clamp(1.2rem, 1.9vw, 1.9rem)',
+                color: BRAND.white,
+                fontWeight: 700,
+                fontFamily: "'Open Sans', sans-serif",
+              }}>w/ {sidesText}</div>
+            )}
+            {inlineNote && (
+              <div style={{
+                fontSize: 'clamp(1.2rem, 1.9vw, 1.9rem)',
+                color: BRAND.gold,
+                fontWeight: 700,
+                fontFamily: "'Open Sans', sans-serif",
+              }}>⚠ {inlineNote}</div>
+            )}
+            {secondaryItems.length > 0 && (
+              <div style={{
+                marginTop: '10px',
+                paddingTop: '12px',
+                borderTop: `1px solid ${BRAND.gold}40`,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}>
+                <div style={{
+                  fontSize: '0.95rem',
+                  color: BRAND.gold,
+                  fontFamily: "'Oswald', sans-serif",
+                  letterSpacing: '2px',
+                  textTransform: 'uppercase',
+                }}>Also on this order</div>
+                {secondaryItems.map((it, idx) => (
+                  <div key={idx} style={{
+                    fontSize: 'clamp(1.1rem, 1.5vw, 1.5rem)',
+                    color: BRAND.bone,
+                    fontFamily: "'Oswald', sans-serif",
+                    textTransform: 'uppercase',
+                    fontWeight: 700,
+                  }}>
+                    {it.quantity > 1 && (
+                      <span style={{ color: BRAND.gold, marginRight: '8px' }}>{it.quantity}x</span>
+                    )}
+                    {it.name}
+                    {it.modifiers?.length > 0 && (
+                      <span style={{
+                        color: BRAND.cream,
+                        fontWeight: 500,
+                        textTransform: 'none',
+                        marginLeft: '10px',
+                        fontFamily: "'Open Sans', sans-serif",
+                      }}> · {it.modifiers.join(' · ')}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Right: entree-specific coaching (or fallback quality tip) */}
+          <div style={{
+            flex: '1 1 45%',
+            display: 'flex',
+            flexDirection: 'column',
+            background: BRAND.charcoalDark,
+            borderRadius: '12px',
+            padding: '24px 28px',
+            borderLeft: `4px solid ${BRAND.gold}`,
+            minHeight: 0,
+          }}>
+            <div style={{
+              fontSize: 'clamp(0.95rem, 1.2vw, 1.3rem)',
+              color: BRAND.gold,
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              letterSpacing: '4px',
+              marginBottom: '18px',
+            }}>
+              {primaryCoachTip && (primaryCoachTip.en || primaryCoachTip.es) ? 'COACH' : 'QUALITY COACH'}
+            </div>
+            {tipEn && (
+              <div style={{ marginBottom: tipEs ? 'clamp(1.5vh, 2vh, 3vh)' : 0 }}>
+                <div style={{
+                  fontSize: 'clamp(0.85rem, 1vw, 1.1rem)',
+                  color: BRAND.gold,
+                  fontFamily: "'Oswald', sans-serif",
+                  letterSpacing: '3px',
+                  marginBottom: '10px',
+                  opacity: 0.8,
+                }}>ENGLISH</div>
+                <div style={{
+                  fontSize: 'clamp(1.6rem, 2.6vw, 2.6rem)',
+                  color: BRAND.bone,
+                  fontFamily: "'Playfair Display', Georgia, serif",
+                  lineHeight: 1.3,
+                }}>{tipEn}</div>
+              </div>
+            )}
+            {tipEn && tipEs && (
+              <div style={{
+                width: '40%',
+                height: '1px',
+                background: `${BRAND.gold}55`,
+                margin: 'clamp(1vh, 1.5vh, 2vh) 0',
+              }} />
+            )}
+            {tipEs && (
+              <div>
+                <div style={{
+                  fontSize: 'clamp(0.85rem, 1vw, 1.1rem)',
+                  color: BRAND.sage,
+                  fontFamily: "'Oswald', sans-serif",
+                  letterSpacing: '3px',
+                  marginBottom: '10px',
+                  opacity: 0.8,
+                }}>ESPAÑOL</div>
+                <div style={{
+                  fontSize: 'clamp(1.4rem, 2.3vw, 2.3rem)',
+                  color: BRAND.cream,
+                  fontFamily: "'Playfair Display', Georgia, serif",
+                  lineHeight: 1.3,
+                }}>{tipEs}</div>
+              </div>
+            )}
+            {!tipEn && !tipEs && (
+              <div style={{
+                fontSize: 'clamp(1.2rem, 1.6vw, 1.6rem)',
+                color: BRAND.cream,
+                fontFamily: "'Playfair Display', Georgia, serif",
+                fontStyle: 'italic',
+                opacity: 0.7,
+              }}>No coaching tip configured for this dish yet. Add one in Admin → Menu.</div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={s.container}>
       <style>{`
@@ -495,10 +821,27 @@ export default function LineCoachDisplay({ storeId }) {
                 'delivery': BRAND.cream,
               };
 
-              // Max 8 orders visible — enforce minimum readable size
-              const MAX_VISIBLE = 8;
+              // Density tier from outer scope drives row sizing.
+              //   comfortable (2-3 visible) → bigger photo / text, ~50% taller rows
+              //   rush (4+ visible)         → today's compact dense layout
+              const isComfortable = density === 'comfortable';
+              const MAX_VISIBLE = isComfortable ? 3 : 8;
               const visibleOrders = orderSequence.slice(0, MAX_VISIBLE);
               const hiddenCount = orderSequence.length - MAX_VISIBLE;
+              // Density-driven sizes (in px / rem). All of these match the
+              // existing rush values when not in comfortable mode so the
+              // current production layout is byte-for-byte unchanged at 4+.
+              const rowPad = isComfortable ? '14px 0' : '6px 0';
+              const sidebarW = isComfortable ? '110px' : '80px';
+              const orderNumSize = isComfortable ? '1.4rem' : '1rem';
+              const customerSize = isComfortable ? '0.95rem' : '0.7rem';
+              const badgeSize = isComfortable ? '0.85rem' : '0.65rem';
+              const timerSize = isComfortable ? '1.6rem' : '1.1rem';
+              const photoSize = isComfortable ? '110px' : '48px';
+              const entreeNameSize = isComfortable ? '2.2rem' : '1.5rem';
+              const modifierSize = isComfortable ? '1.8rem' : '1.5rem';
+              const sidesLineSize = isComfortable ? '1.7rem' : '1.4rem';
+              const sidesIndent = isComfortable ? '124px' : '58px';
 
               return (
                 <>
@@ -520,7 +863,7 @@ export default function LineCoachDisplay({ storeId }) {
                     return (
                       <div key={oi} style={{
                         borderTop: oi > 0 ? `2px solid ${BRAND.gold}40` : 'none',
-                        padding: '6px 0',
+                        padding: rowPad,
                       }}>
                       {allergyNote && (
                         <div style={{
@@ -549,7 +892,7 @@ export default function LineCoachDisplay({ storeId }) {
                       }}>
                         {/* Left sidebar: check info + timer */}
                         <div style={{
-                          width: '80px',
+                          width: sidebarW,
                           background: `${ticketBorderColor}15`,
                           borderLeft: `5px solid ${ticketBorderColor}`,
                           display: 'flex',
@@ -561,14 +904,14 @@ export default function LineCoachDisplay({ storeId }) {
                           gap: '3px',
                         }}>
                           <div style={{
-                            fontSize: '1rem',
+                            fontSize: orderNumSize,
                             fontWeight: 700,
                             color: BRAND.bone,
                             fontFamily: "'Oswald', sans-serif",
                           }}>#{order.orderNum}</div>
                           {order.customerName && (
                             <div style={{
-                              fontSize: '0.7rem',
+                              fontSize: customerSize,
                               color: BRAND.cream,
                               fontFamily: "'Open Sans', sans-serif",
                               textAlign: 'center',
@@ -577,7 +920,7 @@ export default function LineCoachDisplay({ storeId }) {
                           )}
                           {order.priority === 'rush' && (
                             <div style={{
-                              fontSize: '0.65rem',
+                              fontSize: badgeSize,
                               background: BRAND.white,
                               color: BRAND.charcoal,
                               padding: '2px 6px',
@@ -588,7 +931,7 @@ export default function LineCoachDisplay({ storeId }) {
                           )}
                           {!order.isFutureOrder && diningLabel && order.priority !== 'rush' && (
                             <div style={{
-                              fontSize: '0.65rem',
+                              fontSize: badgeSize,
                               background: diningColor,
                               color: BRAND.charcoal,
                               padding: '2px 6px',
@@ -599,7 +942,7 @@ export default function LineCoachDisplay({ storeId }) {
                           )}
                           {order.isFutureOrder && (
                             <div style={{
-                              fontSize: '0.65rem',
+                              fontSize: badgeSize,
                               background: BRAND.blue,
                               color: BRAND.charcoal,
                               padding: '2px 6px',
@@ -610,7 +953,7 @@ export default function LineCoachDisplay({ storeId }) {
                           )}
                           {!order.isFutureOrder && (
                             <div style={{
-                              fontSize: '1.1rem',
+                              fontSize: timerSize,
                               color: ticketBorderColor,
                               fontWeight: 700,
                               fontFamily: "'Oswald', sans-serif",
@@ -639,8 +982,8 @@ export default function LineCoachDisplay({ storeId }) {
                                 src={getSideImageUrl(item.name, menuItems, configSides)}
                                 alt={item.name}
                                 style={{
-                                  width: '48px',
-                                  height: '48px',
+                                  width: photoSize,
+                                  height: photoSize,
                                   objectFit: 'cover',
                                   borderRadius: '50%',
                                   flexShrink: 0,
@@ -648,7 +991,7 @@ export default function LineCoachDisplay({ storeId }) {
                                 onError={(e) => { e.target.style.display = 'none'; }}
                               />
                               <div style={{
-                                fontSize: '1.5rem',
+                                fontSize: entreeNameSize,
                                 fontWeight: 700,
                                 color: BRAND.bone,
                                 fontFamily: "'Oswald', sans-serif",
@@ -669,7 +1012,7 @@ export default function LineCoachDisplay({ storeId }) {
                                   // of being truncated by ellipsis.
                                   flex: 1,
                                   minWidth: 0,
-                                  fontSize: '1.5rem',
+                                  fontSize: modifierSize,
                                   fontWeight: 700,
                                   color: BRAND.white,
                                   fontFamily: "'Open Sans', sans-serif",
@@ -682,9 +1025,9 @@ export default function LineCoachDisplay({ storeId }) {
                           ))}
                           {(sidesText || inlineNote) && (
                             <div style={{
-                              fontSize: '1.4rem',
+                              fontSize: sidesLineSize,
                               lineHeight: 1.3,
-                              paddingLeft: '58px',
+                              paddingLeft: sidesIndent,
                               display: 'flex',
                               gap: '12px',
                               flexWrap: 'wrap',

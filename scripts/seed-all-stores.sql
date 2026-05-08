@@ -20,28 +20,31 @@ BEGIN
 
   -- If hollywood doesn't exist, use defaults
   IF menu_data IS NULL THEN
+    -- Each menu item supports an optional bilingual coach_tip {en, es}
+    -- shown in the Display's focus mode (when only 1 order is on the
+    -- board). Empty es means English-only is rendered.
     menu_data := '[
-      {"name":"Quarter Bird","station":"oven","cook_time":0,"category":"Better Chicken"},
-      {"name":"Half Bird","station":"oven","cook_time":0,"category":"Better Chicken"},
-      {"name":"Whole Bird","station":"oven","cook_time":0,"category":"Better Chicken"},
-      {"name":"Chicken Dinner Box","station":"oven","cook_time":0,"category":"Better Chicken"},
-      {"name":"Protein Plate","station":"line","cook_time":3,"category":"Better Chicken"},
-      {"name":"Boneless Breast Market Plate","station":"line","cook_time":4,"category":"Market Plate"},
-      {"name":"Chicken Tinga Market Plate","station":"line","cook_time":4,"category":"Market Plate"},
-      {"name":"Veggie Market Plate","station":"line","cook_time":4,"category":"Market Plate"},
-      {"name":"Pollo Verde Market Plate","station":"line","cook_time":4,"category":"Market Plate"},
-      {"name":"Tacos Dorados","station":"fryer","cook_time":5,"category":"Modern Mexican"},
-      {"name":"Burrito Mexicano","station":"line","cook_time":4,"category":"Modern Mexican"},
-      {"name":"Tostada Bowl","station":"line","cook_time":4,"category":"Modern Mexican"},
-      {"name":"Superfood Ensalada","station":"cold","cook_time":3,"category":"Plant Forward"},
-      {"name":"Harvest Bowl","station":"line","cook_time":4,"category":"Plant Forward"},
-      {"name":"Chicken Leg","station":"oven","cook_time":0,"category":"A La Carte"},
-      {"name":"Chicken Thigh","station":"oven","cook_time":0,"category":"A La Carte"},
-      {"name":"Chicken Breast","station":"oven","cook_time":0,"category":"A La Carte"},
-      {"name":"Chicken Wing","station":"oven","cook_time":0,"category":"A La Carte"},
-      {"name":"Whole Bird (A La Carte)","station":"oven","cook_time":0,"category":"A La Carte"},
-      {"name":"Kids Quesadilla","station":"grill","cook_time":4,"category":"Other"},
-      {"name":"Taco (Single)","station":"line","cook_time":3,"category":"Other"}
+      {"name":"Quarter Bird","station":"oven","cook_time":0,"category":"Better Chicken","coach_tip":{"en":"Check internal temp — 165°F. Golden skin, no pale spots. Pull oldest bird from the cabinet first.","es":""}},
+      {"name":"Half Bird","station":"oven","cook_time":0,"category":"Better Chicken","coach_tip":{"en":"Check internal temp — 165°F. Golden skin, no pale spots. Pull oldest bird from the cabinet first.","es":""}},
+      {"name":"Whole Bird","station":"oven","cook_time":0,"category":"Better Chicken","coach_tip":{"en":"Whole bird presentation — even golden color, breast-up. Confirm 165°F at thickest part of the thigh.","es":""}},
+      {"name":"Chicken Dinner Box","station":"oven","cook_time":0,"category":"Better Chicken","coach_tip":{"en":"Pack hot items together, cold items separate. Tortillas warm and pliable, salsa fresh.","es":""}},
+      {"name":"Protein Plate","station":"line","cook_time":3,"category":"Better Chicken","coach_tip":{"en":"Portion chicken by weight — 51+ grams protein. Two sides, no shorting the guest.","es":""}},
+      {"name":"Boneless Breast Market Plate","station":"line","cook_time":4,"category":"Market Plate","coach_tip":{"en":"Boneless breast: even slice, juicy. Two sides per plate. Garnish before it leaves the pass.","es":""}},
+      {"name":"Chicken Tinga Market Plate","station":"line","cook_time":4,"category":"Market Plate","coach_tip":{"en":"Tinga should be saucy, not dry. Taste the salsa before plating. Two sides per plate.","es":""}},
+      {"name":"Veggie Market Plate","station":"line","cook_time":4,"category":"Market Plate","coach_tip":{"en":"No protein on this plate — double-check before firing. Two sides, full portion.","es":""}},
+      {"name":"Pollo Verde Market Plate","station":"line","cook_time":4,"category":"Market Plate","coach_tip":{"en":"Verde should be bright green, not muddy. Taste before plating. Two sides per plate.","es":""}},
+      {"name":"Tacos Dorados","station":"fryer","cook_time":5,"category":"Modern Mexican","coach_tip":{"en":"Fry oil at 350°F — golden and crisp, not greasy. Plate immediately, no sitting.","es":""}},
+      {"name":"Burrito Mexicano","station":"line","cook_time":4,"category":"Modern Mexican","coach_tip":{"en":"Wrap tight — no air gaps. Tortilla pliable from the warmer. Cut on the bias before plating.","es":""}},
+      {"name":"Tostada Bowl","station":"line","cook_time":4,"category":"Modern Mexican","coach_tip":{"en":"Build cold to hot — base, protein, garnish last. Tostada shell crisp, not chewy.","es":""}},
+      {"name":"Superfood Ensalada","station":"cold","cook_time":3,"category":"Plant Forward","coach_tip":{"en":"Dress to order — never pre-dressed. Toss gently, plate high. Greens crisp.","es":""}},
+      {"name":"Harvest Bowl","station":"line","cook_time":4,"category":"Plant Forward","coach_tip":{"en":"Build base first, layer toppings. Grains hot, greens cold. Plate vibrant.","es":""}},
+      {"name":"Chicken Leg","station":"oven","cook_time":0,"category":"A La Carte","coach_tip":{"en":"Single piece — confirm 165°F. Pull from oldest tray. Garnish before it goes out.","es":""}},
+      {"name":"Chicken Thigh","station":"oven","cook_time":0,"category":"A La Carte","coach_tip":{"en":"Single piece — confirm 165°F. Pull from oldest tray. Garnish before it goes out.","es":""}},
+      {"name":"Chicken Breast","station":"oven","cook_time":0,"category":"A La Carte","coach_tip":{"en":"Single piece — confirm 165°F. Slice on the bias if requested. Pull from oldest tray.","es":""}},
+      {"name":"Chicken Wing","station":"oven","cook_time":0,"category":"A La Carte","coach_tip":{"en":"Crispy skin, juicy meat. Pull from oldest tray. Sauce only if requested.","es":""}},
+      {"name":"Whole Bird (A La Carte)","station":"oven","cook_time":0,"category":"A La Carte","coach_tip":{"en":"No sides — bird only. Even golden color. Confirm 165°F at thickest part of the thigh.","es":""}},
+      {"name":"Kids Quesadilla","station":"grill","cook_time":4,"category":"Other","coach_tip":{"en":"Cheese fully melted, tortilla golden — not pale. Cut into 4 triangles before plating.","es":""}},
+      {"name":"Taco (Single)","station":"line","cook_time":3,"category":"Other","coach_tip":{"en":"Tortilla warm and pliable. Build hot to cold. Garnish last.","es":""}}
     ]'::jsonb;
 
     sides_data := '[

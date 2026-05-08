@@ -224,16 +224,20 @@ CREATE POLICY "Public read lc-images" ON storage.objects
 INSERT INTO lc_config (store_id, menu_items, sides, quality_tips, hold_times, settings)
 VALUES (
   'hollywood',
+  -- Each menu item supports an optional bilingual coach_tip {en, es}
+  -- shown in the Display's focus mode (when only 1 order is on the
+  -- board). Empty es means English-only is rendered. Falls back to the
+  -- store-level quality_tips when an item has no coach_tip.
   '[
-    {"name": "Classic Smash Burger", "station": "grill", "cook_time": 6},
-    {"name": "Double Smash Burger", "station": "grill", "cook_time": 7},
-    {"name": "Crispy Chicken Sandwich", "station": "fryer", "cook_time": 8},
-    {"name": "Grilled Chicken Sandwich", "station": "grill", "cook_time": 9},
-    {"name": "Nashville Hot Chicken", "station": "fryer", "cook_time": 8},
-    {"name": "Veggie Burger", "station": "grill", "cook_time": 6},
-    {"name": "Chicken Tenders", "station": "fryer", "cook_time": 7},
-    {"name": "Fish Sandwich", "station": "fryer", "cook_time": 8},
-    {"name": "Hot Dog", "station": "grill", "cook_time": 5}
+    {"name": "Classic Smash Burger", "station": "grill", "cook_time": 6, "coach_tip": {"en": "Smash thin — 1/4 inch before pressing. Crusty edges, juicy center.", "es": ""}},
+    {"name": "Double Smash Burger", "station": "grill", "cook_time": 7, "coach_tip": {"en": "Two patties, smashed thin. Stack: bun → sauce → patty → cheese → patty → cheese → top.", "es": ""}},
+    {"name": "Crispy Chicken Sandwich", "station": "fryer", "cook_time": 8, "coach_tip": {"en": "Fry oil 350°F. Golden, crisp, juicy. Confirm 165°F internal.", "es": ""}},
+    {"name": "Grilled Chicken Sandwich", "station": "grill", "cook_time": 9, "coach_tip": {"en": "Chicken juicy, char marks visible. Confirm 165°F before plating.", "es": ""}},
+    {"name": "Nashville Hot Chicken", "station": "fryer", "cook_time": 8, "coach_tip": {"en": "Toss in hot oil only after fry. Pickle on top. Confirm 165°F internal.", "es": ""}},
+    {"name": "Veggie Burger", "station": "grill", "cook_time": 6, "coach_tip": {"en": "Sear both sides — no falling apart. Bun toasted golden.", "es": ""}},
+    {"name": "Chicken Tenders", "station": "fryer", "cook_time": 7, "coach_tip": {"en": "Even fry, golden brown. Plate immediately, no sitting. Confirm 165°F.", "es": ""}},
+    {"name": "Fish Sandwich", "station": "fryer", "cook_time": 8, "coach_tip": {"en": "Fish flaky and white inside. Tartar fresh, lettuce crisp.", "es": ""}},
+    {"name": "Hot Dog", "station": "grill", "cook_time": 5, "coach_tip": {"en": "Grill marks both sides. Bun toasted on the inside.", "es": ""}}
   ]'::jsonb,
   '[
     {"name": "French Fries", "station": "fryer", "cook_time": 4, "batch_size": 4},

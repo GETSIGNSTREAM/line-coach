@@ -273,6 +273,17 @@ function validateMenuItems(arr) {
     const out = { name, station, cook_time: parseInt(row.cook_time, 10) || 0 };
     if (row.category && String(row.category).trim()) out.category = String(row.category).trim();
     if (row.image_url && String(row.image_url).trim()) out.image_url = String(row.image_url).trim();
+    // Bilingual coach_tip — preserved on import. Accepts either an
+    // object {en, es} or flat coach_tip_en / coach_tip_es CSV columns.
+    const tipEn = (row.coach_tip && typeof row.coach_tip === 'object' && row.coach_tip.en)
+      ? String(row.coach_tip.en)
+      : (row.coach_tip_en ? String(row.coach_tip_en) : '');
+    const tipEs = (row.coach_tip && typeof row.coach_tip === 'object' && row.coach_tip.es)
+      ? String(row.coach_tip.es)
+      : (row.coach_tip_es ? String(row.coach_tip_es) : '');
+    if (tipEn.trim() || tipEs.trim()) {
+      out.coach_tip = { en: tipEn, es: tipEs };
+    }
     return out;
   });
 }
@@ -295,7 +306,20 @@ function validateSides(arr) {
   });
 }
 
-const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category', 'image_url'];
+const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category', 'image_url', 'coach_tip_en', 'coach_tip_es'];
+
+// Flatten menu items so coach_tip {en, es} round-trips cleanly through
+// the CSV (which has no nested-object support).
+function flattenMenuItemsForCsv(items) {
+  return (items || []).map((it) => {
+    const tip = (it.coach_tip && typeof it.coach_tip === 'object') ? it.coach_tip : null;
+    return {
+      ...it,
+      coach_tip_en: tip ? (tip.en || '') : '',
+      coach_tip_es: tip ? (tip.es || '') : '',
+    };
+  });
+}
 const SIDES_CSV_HEADERS = ['name', 'station', 'cook_time', 'batch_size', 'image_url'];
 
 async function uploadImage(file, kind, name, token) {
@@ -628,7 +652,7 @@ export default function LineCoachAdmin({ storeId }) {
       <div style={styles.panel}>
         <BrandWideBanner />
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px', flexWrap: 'wrap' }}>
-          <button style={styles.btnSecondary} onClick={() => downloadCsv(`menu-${storeId}.csv`, MENU_CSV_HEADERS, items)}>
+          <button style={styles.btnSecondary} onClick={() => downloadCsv(`menu-${storeId}.csv`, MENU_CSV_HEADERS, flattenMenuItemsForCsv(items))}>
             Export CSV
           </button>
           <label style={{ ...styles.btnSecondary, display: 'inline-block', cursor: 'pointer' }}>
@@ -641,7 +665,10 @@ export default function LineCoachAdmin({ storeId }) {
           )}
         </div>
         <div style={{ fontSize: '0.75rem', color: `${BRAND.cream}80`, marginBottom: '12px' }}>
-          Headers: <code>name, station, cook_time, category</code> · Edit in Excel/Sheets, save as CSV, then re-import.
+          Headers: <code>name, station, cook_time, category, coach_tip_en, coach_tip_es</code> · Edit in Excel/Sheets, save as CSV, then re-import.
+        </div>
+        <div style={{ fontSize: '0.8rem', color: BRAND.cream, marginBottom: '12px', padding: '8px 12px', background: `${BRAND.gold}15`, borderLeft: `3px solid ${BRAND.gold}`, borderRadius: '3px' }}>
+          <strong style={{ color: BRAND.gold }}>Coach Tips:</strong> Shown on the kitchen display when only this dish is on the board (focus mode). Use to reinforce quality standards specific to this entree. Spanish is optional.
         </div>
         <table style={styles.table}>
           <thead>
@@ -649,42 +676,77 @@ export default function LineCoachAdmin({ storeId }) {
               <th style={{ ...styles.th, width: '70px' }}>Image</th>
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Station</th>
-              <th style={styles.th}>Cook Time (min)</th>
-              <th style={styles.th}>Actions</th>
+              <th style={{ ...styles.th, width: '90px' }}>Cook Time</th>
+              <th style={styles.th}>Coach Tip (EN)</th>
+              <th style={styles.th}>Coach Tip (ES)</th>
+              <th style={{ ...styles.th, width: '90px' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {items.map((item, i) => (
-              <tr key={i}>
-                <td style={styles.td}>
-                  <ImageCell value={item.image_url} kind="item" name={item.name} token={token}
-                    onChange={(url) => { const u = [...items]; u[i] = { ...item, image_url: url || undefined }; updateConfig('menu_items', u); }} />
-                </td>
-                <td style={styles.td}>
-                  <input style={{ ...styles.input, marginBottom: 0 }} value={item.name}
-                    onChange={(e) => { const u = [...items]; u[i] = { ...item, name: e.target.value }; updateConfig('menu_items', u); }} />
-                </td>
-                <td style={styles.td}>
-                  <select style={{ ...styles.input, marginBottom: 0 }} value={item.station}
-                    onChange={(e) => { const u = [...items]; u[i] = { ...item, station: e.target.value }; updateConfig('menu_items', u); }}>
-                    <option value="oven">Oven</option>
-                    <option value="grill">Grill</option>
-                    <option value="fryer">Fryer</option>
-                    <option value="line">Line</option>
-                    <option value="cold">Cold</option>
-                    <option value="hot_hold">Hot Hold</option>
-                    <option value="grab">Grab</option>
-                  </select>
-                </td>
-                <td style={styles.td}>
-                  <input type="number" style={{ ...styles.input, marginBottom: 0, width: '80px' }} value={item.cook_time}
-                    onChange={(e) => { const u = [...items]; u[i] = { ...item, cook_time: parseInt(e.target.value) || 0 }; updateConfig('menu_items', u); }} />
-                </td>
-                <td style={styles.td}>
-                  <button style={styles.btnSecondary} onClick={() => { updateConfig('menu_items', items.filter((_, idx) => idx !== i)); }}>Remove</button>
-                </td>
-              </tr>
-            ))}
+            {items.map((item, i) => {
+              // Read existing coach_tip; tolerate missing/legacy shapes.
+              const tip = item.coach_tip && typeof item.coach_tip === 'object'
+                ? { en: item.coach_tip.en || '', es: item.coach_tip.es || '' }
+                : { en: '', es: '' };
+              const setTip = (field, value) => {
+                const u = [...items];
+                const next = { ...item };
+                const newTip = { ...tip, [field]: value };
+                if (newTip.en.trim() || newTip.es.trim()) next.coach_tip = newTip;
+                else delete next.coach_tip;
+                u[i] = next;
+                updateConfig('menu_items', u);
+              };
+              return (
+                <tr key={i}>
+                  <td style={styles.td}>
+                    <ImageCell value={item.image_url} kind="item" name={item.name} token={token}
+                      onChange={(url) => { const u = [...items]; u[i] = { ...item, image_url: url || undefined }; updateConfig('menu_items', u); }} />
+                  </td>
+                  <td style={styles.td}>
+                    <input style={{ ...styles.input, marginBottom: 0 }} value={item.name}
+                      onChange={(e) => { const u = [...items]; u[i] = { ...item, name: e.target.value }; updateConfig('menu_items', u); }} />
+                  </td>
+                  <td style={styles.td}>
+                    <select style={{ ...styles.input, marginBottom: 0 }} value={item.station}
+                      onChange={(e) => { const u = [...items]; u[i] = { ...item, station: e.target.value }; updateConfig('menu_items', u); }}>
+                      <option value="oven">Oven</option>
+                      <option value="grill">Grill</option>
+                      <option value="fryer">Fryer</option>
+                      <option value="line">Line</option>
+                      <option value="cold">Cold</option>
+                      <option value="hot_hold">Hot Hold</option>
+                      <option value="grab">Grab</option>
+                    </select>
+                  </td>
+                  <td style={styles.td}>
+                    <input type="number" style={{ ...styles.input, marginBottom: 0, width: '80px' }} value={item.cook_time}
+                      onChange={(e) => { const u = [...items]; u[i] = { ...item, cook_time: parseInt(e.target.value) || 0 }; updateConfig('menu_items', u); }} />
+                  </td>
+                  <td style={styles.td}>
+                    <textarea
+                      style={{ ...styles.textarea, marginBottom: 0, minHeight: '50px', minWidth: '220px' }}
+                      rows={2}
+                      placeholder="e.g. Check internal temp 165°F, golden skin"
+                      value={tip.en}
+                      onChange={(e) => setTip('en', e.target.value)}
+                    />
+                  </td>
+                  <td style={styles.td}>
+                    <textarea
+                      style={{ ...styles.textarea, marginBottom: 0, minHeight: '50px', minWidth: '220px' }}
+                      rows={2}
+                      placeholder="Optional — leave blank for English only"
+                      value={tip.es}
+                      onChange={(e) => setTip('es', e.target.value)}
+                    />
+                  </td>
+                  <td style={styles.td}>
+                    <button style={styles.btnSecondary} onClick={() => { updateConfig('menu_items', items.filter((_, idx) => idx !== i)); }}>Remove</button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         <button style={{ ...styles.btnSecondary, marginTop: '12px' }}
