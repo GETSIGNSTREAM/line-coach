@@ -25,6 +25,12 @@ const STORES = [
 export default function LineCoachHub() {
   const [storeCounts, setStoreCounts] = useState({});
   const [now, setNow] = useState(new Date());
+  // The hub must filter the same way the display does, otherwise the
+  // numbers shown here will not match what cooks see in the kitchen
+  // (Toast leaves orders in 'active' status indefinitely for many flows;
+  // the display hides anything older than max_ticket_minutes). Pull the
+  // brand-wide threshold from any store's config — it's brand-scoped.
+  const [maxTicketMin, setMaxTicketMin] = useState(60);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 30_000);
@@ -32,13 +38,36 @@ export default function LineCoachHub() {
   }, []);
 
   useEffect(() => {
+    async function fetchThreshold() {
+      try {
+        const res = await fetch(`/api/line-coach/config?store=${STORES[0].slug}`);
+        const data = await res.json();
+        const m = data?.hold_times?.max_ticket_minutes;
+        if (Number.isFinite(m) && m > 0) setMaxTicketMin(m);
+      } catch { /* keep default */ }
+    }
+    fetchThreshold();
+  }, []);
+
+  useEffect(() => {
     async function fetchCounts() {
+      const cutoff = Date.now() - maxTicketMin * 60_000;
       const counts = {};
       for (const store of STORES) {
         try {
           const res = await fetch(`/api/line-coach/orders?store=${store.slug}`);
           const data = await res.json();
-          counts[store.slug] = (data.orders || []).length;
+          // Mirror the display's stale-ticket filter so the number on
+          // the hub card matches the number the cook sees on the
+          // kitchen monitor. Anything older than maxTicketMin is
+          // considered abandoned by Toast (no completed/voided event
+          // ever arrived) and is hidden from cook-facing views.
+          const fresh = (data.orders || []).filter((o) => {
+            const t = new Date(o.toast_created_at || o.fire_at || o.created_at).getTime();
+            if (!t || Number.isNaN(t)) return true;
+            return t >= cutoff;
+          });
+          counts[store.slug] = fresh.length;
         } catch {
           counts[store.slug] = null;
         }
@@ -48,7 +77,7 @@ export default function LineCoachHub() {
     fetchCounts();
     const interval = setInterval(fetchCounts, 30_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [maxTicketMin]);
 
   return (
     <div style={s.container}>
