@@ -82,8 +82,21 @@ export default function LineCoachHub() {
   return (
     <div style={s.container}>
       <div style={s.header}>
-        <div>
-          <div style={s.title}>WILDBIRD LINE COACH</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* Brand logo + product subtitle. onError falls back to text. */}
+          <img
+            src="/WILDBIRD-LOGO-WHITE.png"
+            alt="WILDBIRD"
+            style={{ height: '44px', width: 'auto', display: 'block' }}
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+              const fallback = e.currentTarget.nextElementSibling;
+              if (fallback) fallback.style.display = '';
+            }}
+          />
+          <div style={{ display: 'none' }}>
+            <div style={s.title}>WILDBIRD LINE COACH</div>
+          </div>
           <div style={s.subtitle}>All Locations</div>
         </div>
         <div style={s.headerRight}>

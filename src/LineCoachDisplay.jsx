@@ -1309,7 +1309,20 @@ function Header({ now, orderCount, staleCount = 0 }) {
   return (
     <div style={s.header}>
       <div style={s.headerLeft}>
-        <span style={s.title}>WILDBIRD</span>
+        {/* Brand logo replaces the wordmark. Sized by height so the
+            ~4.18:1 logo image scales cleanly. onError falls back to
+            the WILDBIRD text wordmark in case the asset is missing. */}
+        <img
+          src="/WILDBIRD-LOGO-WHITE.png"
+          alt="WILDBIRD"
+          style={{ height: '36px', width: 'auto', display: 'block' }}
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+            const fallback = e.currentTarget.nextElementSibling;
+            if (fallback) fallback.style.display = '';
+          }}
+        />
+        <span style={{ ...s.title, display: 'none' }}>WILDBIRD</span>
       </div>
       <div style={s.headerCenter}>
         <span style={s.ticketCount}>
@@ -1356,7 +1369,7 @@ const s = {
     background: BRAND.charcoalDark,
     borderBottom: `2px solid ${BRAND.gold}`,
   },
-  headerLeft: { display: 'flex', alignItems: 'baseline', gap: '8px' },
+  headerLeft: { display: 'flex', alignItems: 'center', gap: '8px' },
   headerCenter: { flex: 1, textAlign: 'center' },
   title: {
     fontSize: '1.4rem',

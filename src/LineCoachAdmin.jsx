@@ -655,9 +655,24 @@ export default function LineCoachAdmin({ storeId }) {
     return (
       <div style={styles.container}>
         <div style={styles.loginBox}>
-          <h2 style={{ color: BRAND.gold, marginTop: 0, fontFamily: "'Oswald', sans-serif", letterSpacing: '2px', textTransform: 'uppercase' }}>
-            Line Coach Admin
-          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', marginBottom: '20px' }}>
+            <img
+              src="/WILDBIRD-LOGO-WHITE.png"
+              alt="WILDBIRD"
+              style={{ height: '52px', width: 'auto', display: 'block' }}
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+                const fallback = e.currentTarget.nextElementSibling;
+                if (fallback) fallback.style.display = '';
+              }}
+            />
+            <h2 style={{ display: 'none', color: BRAND.gold, margin: 0, fontFamily: "'Oswald', sans-serif", letterSpacing: '2px', textTransform: 'uppercase' }}>
+              WILDBIRD
+            </h2>
+            <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", letterSpacing: '3px', textTransform: 'uppercase', fontSize: '0.95rem', fontWeight: 700 }}>
+              Line Coach Admin
+            </div>
+          </div>
           <form onSubmit={handleLogin}>
             <input
               type="password"
@@ -1390,9 +1405,25 @@ export default function LineCoachAdmin({ storeId }) {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <div>
-          <div style={styles.title}>Line Coach Admin</div>
-          <div style={styles.subtitle}>Store: {storeId}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          {/* Brand logo lockup. onError falls back to the text title. */}
+          <img
+            src="/WILDBIRD-LOGO-WHITE.png"
+            alt="WILDBIRD"
+            style={{ height: '40px', width: 'auto', display: 'block' }}
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+              const fallback = e.currentTarget.nextElementSibling;
+              if (fallback) fallback.style.display = '';
+            }}
+          />
+          <div style={{ display: 'none' }}>
+            <div style={styles.title}>Line Coach Admin</div>
+          </div>
+          <div>
+            <div style={{ ...styles.subtitle, fontSize: '0.85rem', color: BRAND.gold, letterSpacing: '2px', textTransform: 'uppercase', fontFamily: "'Oswald', sans-serif", fontWeight: 700 }}>Admin</div>
+            <div style={styles.subtitle}>Store: {storeId}</div>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <a href="/?hub" style={{ ...styles.btnSecondary, textDecoration: 'none' }}>All Stores</a>
