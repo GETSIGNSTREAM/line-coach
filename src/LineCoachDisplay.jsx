@@ -953,8 +953,15 @@ export default function LineCoachDisplay({ storeId }) {
               const timerSize = isComfortable ? '1.6rem' : '1.1rem';
               const photoSize = isComfortable ? '110px' : '48px';
               const entreeNameSize = isComfortable ? '2.2rem' : '1.5rem';
-              const modifierSize = isComfortable ? '1.8rem' : '1.5rem';
-              const sidesLineSize = isComfortable ? '1.7rem' : '1.4rem';
+              // Modifier + sides line are now BIGGER than the entree
+              // name in rush mode and matched-or-larger in comfortable.
+              // Cooks identify the dish from the photo first; the
+              // critical "no nuts / sub chicken / extra salsa /
+              // w/ Spanish Rice + Kale Slaw" detail is what they
+              // actually need to read from across the line. Quality
+              // accuracy depends on these being legible at distance.
+              const modifierSize = isComfortable ? '2.1rem' : '1.7rem';
+              const sidesLineSize = isComfortable ? '2.1rem' : '1.7rem';
               const sidesIndent = isComfortable ? '124px' : '58px';
 
               return (
