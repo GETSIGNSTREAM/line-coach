@@ -447,7 +447,30 @@ function BrandWideBanner() {
   );
 }
 
-export default function LineCoachAdmin({ storeId }) {
+// All WILDBIRD store slugs in the order the hub presents them.
+// Used by the admin store-picker dropdown.
+const STORE_OPTIONS = [
+  { slug: 'culver-city', name: 'Culver City' },
+  { slug: '3rd-la-brea', name: '3rd & La Brea' },
+  { slug: 'hollywood', name: 'Hollywood' },
+  { slug: 'westwood', name: 'Westwood (UCLA)' },
+  { slug: 'dtla', name: 'DTLA' },
+  { slug: 'el-segundo', name: 'El Segundo' },
+];
+
+// Tabs that operate on a specific store rather than brand-wide data.
+// When no store is selected, these tabs render a "pick a store" empty
+// state so the admin can still configure brand-wide things.
+// (Webhooks is intentionally NOT here — the integration health banner
+// is brand-wide and the log filter accepts a missing store as
+// "all stores", which is useful for checking Toast routing.)
+const PER_STORE_TABS = new Set(['Settings', 'Devices', 'Analytics']);
+
+export default function LineCoachAdmin({ storeId: initialStoreId }) {
+  // storeId is now LOCAL state, hydrated from the URL prop. The header
+  // dropdown writes to it. The rest of the component already reads
+  // storeId by name so most code doesn't change.
+  const [storeId, setStoreId] = useState(initialStoreId || null);
   const [token, setToken] = useState(null);
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -477,7 +500,10 @@ export default function LineCoachAdmin({ storeId }) {
   async function handleLogin(e) {
     e.preventDefault();
     try {
-      await fetch('/api/line-coach/config?store=' + storeId);
+      // Brand-wide config is fetched without a store, but the API
+      // currently requires one for routing. Use any store slug — the
+      // returned brand fields are identical brand-wide.
+      await fetch('/api/line-coach/config?store=' + (storeId || STORE_OPTIONS[0].slug));
       if (password) {
         setToken(password);
         setLoginError('');
@@ -490,15 +516,26 @@ export default function LineCoachAdmin({ storeId }) {
   useEffect(() => {
     if (!token) return;
 
-    fetch(`/api/line-coach/config?store=${storeId}`)
+    // Brand-wide config (menu_items, sides, quality_tips, hold_times)
+    // is identical across stores via lc_brand_config, so any slug works
+    // when no specific store is picked. Per-store settings only matter
+    // once the user enters a per-store tab.
+    const slugForConfig = storeId || STORE_OPTIONS[0].slug;
+    fetch(`/api/line-coach/config?store=${slugForConfig}`)
       .then((r) => r.json())
       .then(setConfig)
       .catch(console.error);
 
-    fetch(`/api/line-coach/devices?store=${storeId}`)
-      .then((r) => r.json())
-      .then((data) => setDevices(data.devices || []))
-      .catch(console.error);
+    // Devices are per-store. Skip the fetch entirely when no store is
+    // picked so the empty Devices tab doesn't show a stale list.
+    if (storeId) {
+      fetch(`/api/line-coach/devices?store=${storeId}`)
+        .then((r) => r.json())
+        .then((data) => setDevices(data.devices || []))
+        .catch(console.error);
+    } else {
+      setDevices([]);
+    }
   }, [token, storeId]);
 
   function refreshDevices() {
@@ -549,6 +586,13 @@ export default function LineCoachAdmin({ storeId }) {
   }, [token]);
 
   const loadAnalytics = useCallback(async () => {
+    // Analytics is per-store. Don't bother hitting the API when no
+    // store is selected — the tab renders a "pick a store" empty
+    // state instead.
+    if (!storeId) {
+      setAnalytics(null);
+      return;
+    }
     setAnalyticsLoading(true);
     try {
       const res = await fetch(`/api/line-coach/analytics?store=${storeId}&hours=${analyticsHours}`, {
@@ -1163,7 +1207,11 @@ export default function LineCoachAdmin({ storeId }) {
           )}
         </div>
 
-        <p style={{ color: BRAND.cream, marginTop: 0 }}>Last incoming Toast webhooks for store <strong>{storeId}</strong>. Click a row to inspect the raw payload.</p>
+        <p style={{ color: BRAND.cream, marginTop: 0 }}>
+          Last incoming Toast webhooks
+          {storeId ? <> for store <strong>{storeId}</strong></> : <> across <strong>all stores</strong></>}.
+          Click a row to inspect the raw payload.
+        </p>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
           <label style={{ fontSize: '0.85rem', color: BRAND.cream }}>Status:</label>
           <select style={{ ...styles.input, marginBottom: 0, width: 'auto' }} value={webhookFilter.status}
@@ -1422,13 +1470,39 @@ export default function LineCoachAdmin({ storeId }) {
           </div>
           <div>
             <div style={{ ...styles.subtitle, fontSize: '0.85rem', color: BRAND.gold, letterSpacing: '2px', textTransform: 'uppercase', fontFamily: "'Oswald', sans-serif", fontWeight: 700 }}>Admin</div>
-            <div style={styles.subtitle}>Store: {storeId}</div>
+            <div style={styles.subtitle}>Brand-wide</div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* Store picker for the per-store tabs (Settings, Devices,
+              Webhooks, Analytics). Brand-wide tabs ignore this value.
+              Empty value = no store selected, those tabs show an empty
+              state prompting the admin to pick. */}
+          <select
+            value={storeId || ''}
+            onChange={(e) => setStoreId(e.target.value || null)}
+            style={{
+              ...styles.btnSecondary,
+              cursor: 'pointer',
+              minWidth: '160px',
+              fontFamily: "'Oswald', sans-serif",
+              letterSpacing: '1px',
+              textTransform: 'uppercase',
+              fontSize: '0.85rem',
+            }}
+          >
+            <option value="">— Pick store —</option>
+            {STORE_OPTIONS.map((s) => (
+              <option key={s.slug} value={s.slug}>{s.name}</option>
+            ))}
+          </select>
           <a href="/?hub" style={{ ...styles.btnSecondary, textDecoration: 'none' }}>All Stores</a>
           <a href="/?simulator" style={{ ...styles.btnSecondary, textDecoration: 'none' }}>Simulator</a>
-          <a href={`/?store=${storeId}`} style={{ ...styles.btnSecondary, textDecoration: 'none' }}>View Display</a>
+          {storeId ? (
+            <a href={`/?store=${storeId}`} style={{ ...styles.btnSecondary, textDecoration: 'none' }}>View Display</a>
+          ) : (
+            <span style={{ ...styles.btnSecondary, opacity: 0.4, cursor: 'not-allowed' }} title="Pick a store first">View Display</span>
+          )}
         </div>
       </div>
 
@@ -1444,7 +1518,22 @@ export default function LineCoachAdmin({ storeId }) {
         ))}
       </div>
 
-      {tabRenderers[activeTab]?.()}
+      {/* Per-store tabs require a store; show a friendly empty state
+          prompting the admin to pick one if they haven't yet. Brand-
+          wide tabs always render. */}
+      {PER_STORE_TABS.has(activeTab) && !storeId ? (
+        <div style={{ ...styles.panel, textAlign: 'center', padding: '60px 20px' }}>
+          <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🏪</div>
+          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: '1.2rem', letterSpacing: '2px', color: BRAND.gold, textTransform: 'uppercase', marginBottom: '8px' }}>
+            Pick a store
+          </div>
+          <div style={{ color: BRAND.cream, fontSize: '0.9rem' }}>
+            The <strong>{activeTab}</strong> tab shows per-store data. Use the dropdown in the header to choose which store you&apos;re looking at.
+          </div>
+        </div>
+      ) : (
+        tabRenderers[activeTab]?.()
+      )}
 
       {dirty && (
         <div style={styles.saveBar}>

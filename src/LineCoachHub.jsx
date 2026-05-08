@@ -145,12 +145,13 @@ export default function LineCoachHub() {
       </div>
 
       <div style={s.quickLinks}>
-        <span style={s.quickLinksLabel}>Quick Links</span>
-        {STORES.map((store) => (
-          <a key={store.slug} href={`/?admin&store=${store.slug}`} style={s.adminLink}>
-            {store.name} Admin
-          </a>
-        ))}
+        {/* Single brand-wide admin link — Line Coach configuration is
+            brand-scoped (menu, sides, tips, hold times) so a single
+            entry point covers most editing. The admin's in-app store
+            picker handles per-store data (Settings, Devices,
+            Analytics) once the user is in. */}
+        <a href="/?admin" style={s.adminLink}>Admin</a>
+        <a href="/?simulator" style={s.adminLink}>Simulator</a>
       </div>
     </div>
   );
