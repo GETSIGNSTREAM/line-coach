@@ -932,7 +932,7 @@ export default function LineCoachDisplay({ storeId }) {
         <div style={s.leftCol}>
           <div style={s.sidesContainer}>
             {orderSequence.length === 0 && (
-              <div style={{ ...s.emptyState, fontSize: '1.5rem' }}>All orders plated</div>
+              <div style={{ ...s.emptyState, fontSize: '1.5rem' }}>Clear</div>
             )}
             {(() => {
               const diningColors = {
@@ -1189,10 +1189,10 @@ export default function LineCoachDisplay({ storeId }) {
 
         {/* Right Column: Side Batching */}
         <div style={s.rightCol}>
-          <div style={s.sidesPanelHeader}>BATCH SIDES</div>
+          <div style={s.sidesPanelHeader}>SIDES</div>
           <div style={s.sidesContainer}>
             {batchedSides.length === 0 && (
-              <div style={s.emptyState}>No sides to batch</div>
+              <div style={s.emptyState}>—</div>
             )}
             {batchedSides.map(([name, count]) => {
               // Case-insensitive lookup so the configured side row is
@@ -1251,9 +1251,11 @@ export default function LineCoachDisplay({ storeId }) {
                         letterSpacing: '1px',
                         marginTop: '2px',
                       }}>
-                        {cookTime > 0 && <span>{cookTime}m</span>}
-                        {cookTime > 0 && batchesNeeded > 0 && <span> · </span>}
+                        {/* Action first, cook-time second — cook reads
+                            "DROP 3" before "5m" so the action lands. */}
                         {batchesNeeded > 0 && <span>DROP {batchesNeeded}</span>}
+                        {batchesNeeded > 0 && cookTime > 0 && <span> · </span>}
+                        {cookTime > 0 && <span>{cookTime}m</span>}
                       </div>
                     )}
                   </div>
@@ -1307,19 +1309,18 @@ function Header({ now, orderCount, staleCount = 0 }) {
     <div style={s.header}>
       <div style={s.headerLeft}>
         <span style={s.title}>WILDBIRD</span>
-        <span style={s.titleSub}>LINE COACH</span>
       </div>
       <div style={s.headerCenter}>
         <span style={s.ticketCount}>
-          {orderCount} ACTIVE ORDER{orderCount !== 1 ? 'S' : ''}
+          {orderCount} {orderCount === 1 ? 'ORDER' : 'ORDERS'}
         </span>
         {staleCount > 0 && (
           <span style={{
             marginLeft: '12px',
             padding: '2px 8px',
             borderRadius: '999px',
-            background: 'rgba(214, 69, 69, 0.15)',
-            color: '#D64545',
+            background: 'rgba(232, 220, 200, 0.12)',
+            color: BRAND.cream,
             fontSize: '0.7rem',
             fontFamily: "'Oswald', sans-serif",
             letterSpacing: '1px',
@@ -1327,11 +1328,11 @@ function Header({ now, orderCount, staleCount = 0 }) {
             fontWeight: 700,
             verticalAlign: 'middle',
           }}>
-            {staleCount} stale hidden
+            +{staleCount} hidden
           </span>
         )}
       </div>
-      <span style={s.clock}>{now.toLocaleTimeString()}</span>
+      <span style={s.clock}>{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
     </div>
   );
 }
