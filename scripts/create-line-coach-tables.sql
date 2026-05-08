@@ -67,6 +67,22 @@ CREATE TABLE IF NOT EXISTS lc_devices (
 CREATE INDEX IF NOT EXISTS idx_lc_devices_store ON lc_devices (store_id);
 
 -- ══════════════════════════════════════════════════════════
+-- Brand config (single row, shared across all stores)
+-- Holds menu_items, sides, quality_tips, hold_times — anything that
+-- is the SAME WILDBIRD-wide. Per-store config lives in lc_config
+-- (settings only).
+-- ══════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS lc_brand_config (
+  id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),  -- enforce single row
+  menu_items JSONB NOT NULL DEFAULT '[]',
+  sides JSONB NOT NULL DEFAULT '[]',
+  quality_tips JSONB NOT NULL DEFAULT '[]',
+  hold_times JSONB NOT NULL DEFAULT '{"fire_now": 5, "staging": 15, "on_deck": 30}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ══════════════════════════════════════════════════════════
 -- Webhook log (diagnostics for inbound Toast webhooks)
 -- ══════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS lc_webhook_log (
@@ -166,6 +182,7 @@ ALTER TABLE lc_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lc_devices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lc_webhook_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lc_orders_archive ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lc_brand_config ENABLE ROW LEVEL SECURITY;
 
 -- Allow service role full access (API routes use service key)
 CREATE POLICY "Service role full access" ON lc_orders FOR ALL USING (true) WITH CHECK (true);
@@ -173,10 +190,33 @@ CREATE POLICY "Service role full access" ON lc_config FOR ALL USING (true) WITH 
 CREATE POLICY "Service role full access" ON lc_devices FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Service role full access" ON lc_webhook_log FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Service role full access" ON lc_orders_archive FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access" ON lc_brand_config FOR ALL USING (true) WITH CHECK (true);
 
 -- Allow anon read on orders (for realtime subscriptions on display)
 CREATE POLICY "Anon can read orders" ON lc_orders FOR SELECT USING (true);
 CREATE POLICY "Anon can read config" ON lc_config FOR SELECT USING (true);
+CREATE POLICY "Anon can read brand config" ON lc_brand_config FOR SELECT USING (true);
+
+-- ══════════════════════════════════════════════════════════
+-- Seed brand_config from existing hollywood lc_config row.
+-- Idempotent: only inserts if no row exists yet.
+-- ══════════════════════════════════════════════════════════
+INSERT INTO lc_brand_config (id, menu_items, sides, quality_tips, hold_times)
+SELECT 1, menu_items, sides, quality_tips, hold_times
+FROM lc_config
+WHERE store_id = 'hollywood'
+ON CONFLICT (id) DO NOTHING;
+
+-- ══════════════════════════════════════════════════════════
+-- Storage bucket for menu/side images. Public read, service write.
+-- ══════════════════════════════════════════════════════════
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('lc-images', 'lc-images', true)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "Public read lc-images" ON storage.objects;
+CREATE POLICY "Public read lc-images" ON storage.objects
+  FOR SELECT USING (bucket_id = 'lc-images');
 
 -- ══════════════════════════════════════════════════════════
 -- WILDBIRD Seed Data

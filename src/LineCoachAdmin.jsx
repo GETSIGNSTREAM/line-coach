@@ -272,6 +272,7 @@ function validateMenuItems(arr) {
     if (!ALLOWED_STATIONS.includes(station)) throw new Error(`Row ${i + 2}: station "${station}" must be one of ${ALLOWED_STATIONS.join(', ')}`);
     const out = { name, station, cook_time: parseInt(row.cook_time, 10) || 0 };
     if (row.category && String(row.category).trim()) out.category = String(row.category).trim();
+    if (row.image_url && String(row.image_url).trim()) out.image_url = String(row.image_url).trim();
     return out;
   });
 }
@@ -283,17 +284,107 @@ function validateSides(arr) {
     const station = String(row.station || '').trim();
     if (!name) throw new Error(`Row ${i + 2}: name required`);
     if (!ALLOWED_STATIONS.includes(station)) throw new Error(`Row ${i + 2}: station "${station}" must be one of ${ALLOWED_STATIONS.join(', ')}`);
-    return {
+    const out = {
       name,
       station,
       cook_time: parseInt(row.cook_time, 10) || 0,
       batch_size: Math.max(1, parseInt(row.batch_size, 10) || 1),
     };
+    if (row.image_url && String(row.image_url).trim()) out.image_url = String(row.image_url).trim();
+    return out;
   });
 }
 
-const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category'];
-const SIDES_CSV_HEADERS = ['name', 'station', 'cook_time', 'batch_size'];
+const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category', 'image_url'];
+const SIDES_CSV_HEADERS = ['name', 'station', 'cook_time', 'batch_size', 'image_url'];
+
+async function uploadImage(file, kind, name, token) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('kind', kind);
+  fd.append('name', name || '');
+  const res = await fetch('/api/line-coach/upload-image', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Upload failed (${res.status})`);
+  }
+  return await res.json();
+}
+
+function ImageCell({ value, kind, name, token, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const inputRef = (typeof window === 'undefined') ? null : { current: null };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+      <label style={{ cursor: 'pointer', display: 'block' }}>
+        {value ? (
+          <img src={value} alt={name || 'image'}
+            style={{ width: '52px', height: '52px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #36363680' }}
+            onError={(e) => { e.target.style.opacity = '0.3'; }} />
+        ) : (
+          <div style={{
+            width: '52px', height: '52px', borderRadius: '6px',
+            background: '#36363680', border: '1px dashed #E8DCC850',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#E8DCC880', fontSize: '0.7rem', fontFamily: "'Oswald', sans-serif",
+          }}>
+            {busy ? '...' : '+'}
+          </div>
+        )}
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          style={{ display: 'none' }}
+          disabled={busy}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            setBusy(true);
+            setErr('');
+            try {
+              const { url } = await uploadImage(file, kind, name, token);
+              onChange(url);
+            } catch (uploadErr) {
+              setErr(uploadErr.message);
+              setTimeout(() => setErr(''), 4000);
+            }
+            setBusy(false);
+            e.target.value = '';
+          }}
+        />
+      </label>
+      {value && !busy && (
+        <button type="button"
+          onClick={() => onChange(null)}
+          style={{ background: 'transparent', border: 'none', color: '#D6454580', cursor: 'pointer', fontSize: '0.65rem', padding: 0 }}>
+          remove
+        </button>
+      )}
+      {err && <div style={{ fontSize: '0.65rem', color: '#D64545', maxWidth: '70px', textAlign: 'center' }}>{err}</div>}
+    </div>
+  );
+}
+
+function BrandWideBanner() {
+  return (
+    <div style={{
+      padding: '10px 14px',
+      marginBottom: '12px',
+      background: '#D4A57415',
+      borderLeft: '3px solid #D4A574',
+      borderRadius: '4px',
+      fontSize: '0.8rem',
+      color: '#E8DCC8',
+    }}>
+      <strong style={{ color: '#D4A574' }}>BRAND-WIDE</strong> — changes here apply to all WILDBIRD stores.
+    </div>
+  );
+}
 
 export default function LineCoachAdmin({ storeId }) {
   const [token, setToken] = useState(null);
@@ -535,6 +626,7 @@ export default function LineCoachAdmin({ storeId }) {
     const items = config.menu_items || [];
     return (
       <div style={styles.panel}>
+        <BrandWideBanner />
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px', flexWrap: 'wrap' }}>
           <button style={styles.btnSecondary} onClick={() => downloadCsv(`menu-${storeId}.csv`, MENU_CSV_HEADERS, items)}>
             Export CSV
@@ -554,6 +646,7 @@ export default function LineCoachAdmin({ storeId }) {
         <table style={styles.table}>
           <thead>
             <tr>
+              <th style={{ ...styles.th, width: '70px' }}>Image</th>
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Station</th>
               <th style={styles.th}>Cook Time (min)</th>
@@ -563,6 +656,10 @@ export default function LineCoachAdmin({ storeId }) {
           <tbody>
             {items.map((item, i) => (
               <tr key={i}>
+                <td style={styles.td}>
+                  <ImageCell value={item.image_url} kind="item" name={item.name} token={token}
+                    onChange={(url) => { const u = [...items]; u[i] = { ...item, image_url: url || undefined }; updateConfig('menu_items', u); }} />
+                </td>
                 <td style={styles.td}>
                   <input style={{ ...styles.input, marginBottom: 0 }} value={item.name}
                     onChange={(e) => { const u = [...items]; u[i] = { ...item, name: e.target.value }; updateConfig('menu_items', u); }} />
@@ -602,6 +699,7 @@ export default function LineCoachAdmin({ storeId }) {
     const items = config.sides || [];
     return (
       <div style={styles.panel}>
+        <BrandWideBanner />
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px', flexWrap: 'wrap' }}>
           <button style={styles.btnSecondary} onClick={() => downloadCsv(`sides-${storeId}.csv`, SIDES_CSV_HEADERS, items)}>
             Export CSV
@@ -621,6 +719,7 @@ export default function LineCoachAdmin({ storeId }) {
         <table style={styles.table}>
           <thead>
             <tr>
+              <th style={{ ...styles.th, width: '70px' }}>Image</th>
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Station</th>
               <th style={styles.th}>Cook Time</th>
@@ -631,6 +730,10 @@ export default function LineCoachAdmin({ storeId }) {
           <tbody>
             {items.map((item, i) => (
               <tr key={i}>
+                <td style={styles.td}>
+                  <ImageCell value={item.image_url} kind="side" name={item.name} token={token}
+                    onChange={(url) => { const u = [...items]; u[i] = { ...item, image_url: url || undefined }; updateConfig('sides', u); }} />
+                </td>
                 <td style={styles.td}>
                   <input style={{ ...styles.input, marginBottom: 0 }} value={item.name}
                     onChange={(e) => { const u = [...items]; u[i] = { ...item, name: e.target.value }; updateConfig('sides', u); }} />
@@ -695,6 +798,7 @@ export default function LineCoachAdmin({ storeId }) {
     const translatedCount = tips.filter((t) => t.es && t.es.trim()).length;
     return (
       <div style={styles.panel}>
+        <BrandWideBanner />
         <p style={{ color: BRAND.cream, marginTop: 0 }}>
           Quality tips are shown on the display during slow periods. Each tip
           can have an English and a Spanish translation — both are shown
@@ -752,6 +856,7 @@ export default function LineCoachAdmin({ storeId }) {
     const ht = config.hold_times || { fire_now: 5, staging: 15, on_deck: 30 };
     return (
       <div style={styles.panel}>
+        <BrandWideBanner />
         <p style={{ color: BRAND.cream, marginTop: 0 }}>
           Hold times define when orders move between lanes (in minutes before fire time).
         </p>
