@@ -467,7 +467,7 @@ export default function LineCoachDisplay({ storeId }) {
     return (
       <div style={s.container}>
         <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-        <Header now={now} orderCount={0} />
+        <Header now={now} orderCount={0} staleCount={staleCount} />
         {showAudioUnlock && <AudioUnlockBanner onUnlock={unlockAudio} />}
         <div style={s.qualityCoach}>
           <div style={s.qualityLabel}>QUALITY COACH</div>

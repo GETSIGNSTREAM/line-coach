@@ -915,21 +915,29 @@ export default function LineCoachAdmin({ storeId }) {
   }
 
   function renderHoldTimesTab() {
-    const ht = config.hold_times || { fire_now: 5, staging: 15, on_deck: 30 };
+    // Merge with defaults so newly-introduced keys (e.g. max_ticket_minutes)
+    // appear in the UI even if the stored config predates them.
+    const ht = { fire_now: 5, staging: 15, on_deck: 30, max_ticket_minutes: 60, ...(config.hold_times || {}) };
+    const HELP = {
+      fire_now: 'minutes before fire time — moves to FIRE NOW lane',
+      staging: 'minutes before fire time — moves to STAGING lane',
+      on_deck: 'minutes before fire time — moves to ON DECK lane',
+      max_ticket_minutes: 'orders older than this disappear from the display (still kept in DB for analytics)',
+    };
     return (
       <div style={styles.panel}>
         <BrandWideBanner />
         <p style={{ color: BRAND.cream, marginTop: 0 }}>
-          Hold times define when orders move between lanes (in minutes before fire time).
+          Hold times define when orders move between lanes, and when stale tickets fall off the display.
         </p>
         {Object.entries(ht).map(([key, value]) => (
           <div key={key} style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <label style={{ width: '120px', fontWeight: 600, textTransform: 'capitalize', fontFamily: "'Oswald', sans-serif" }}>
+            <label style={{ width: '180px', fontWeight: 600, textTransform: 'capitalize', fontFamily: "'Oswald', sans-serif" }}>
               {key.replace(/_/g, ' ')}:
             </label>
             <input type="number" style={{ ...styles.input, marginBottom: 0, width: '100px' }} value={value}
               onChange={(e) => { updateConfig('hold_times', { ...ht, [key]: parseInt(e.target.value) || 0 }); }} />
-            <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>minutes</span>
+            <span style={{ color: BRAND.cream, fontSize: '0.8rem' }}>{HELP[key] || 'minutes'}</span>
           </div>
         ))}
       </div>
