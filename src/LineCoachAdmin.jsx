@@ -339,17 +339,45 @@ async function uploadImage(file, kind, name, token) {
   return await res.json();
 }
 
+// Mirrors the display's getSideImageUrl fallback so admins can see
+// the same photo cooks see — even when no image_url has been uploaded
+// yet. Falls back to /sides/<slug>.jpg, which is the legacy bundled-
+// asset path the kitchen display uses when the menu item row has no
+// uploaded URL.
+function legacyImagePath(name) {
+  if (!name) return null;
+  const slug = String(name).toLowerCase().replace(/[&]/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
+  if (!slug) return null;
+  return `/sides/${slug}.jpg`;
+}
+
 function ImageCell({ value, kind, name, token, onChange }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const inputRef = (typeof window === 'undefined') ? null : { current: null };
+  // Track whether the legacy fallback image actually exists. We start
+  // optimistic (true) and flip to false on the <img> onError. This way
+  // admins see the existing kitchen display photo as a low-opacity
+  // preview when no upload has been made yet, with hint text below it.
+  const [fallbackBroken, setFallbackBroken] = useState(false);
+  const fallbackUrl = !value ? legacyImagePath(name) : null;
+  const showingFallback = !value && fallbackUrl && !fallbackBroken;
+  // Reset the broken flag when the row's name changes so the new
+  // candidate fallback gets a fresh attempt.
+  useEffect(() => { setFallbackBroken(false); }, [name]);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
-      <label style={{ cursor: 'pointer', display: 'block' }}>
+      <label style={{ cursor: 'pointer', display: 'block' }} title={showingFallback ? 'Bundled photo (click to override)' : undefined}>
         {value ? (
           <img src={value} alt={name || 'image'}
             style={{ width: '52px', height: '52px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #36363680' }}
             onError={(e) => { e.target.style.opacity = '0.3'; }} />
+        ) : showingFallback ? (
+          <img src={fallbackUrl} alt={name || 'image'}
+            style={{
+              width: '52px', height: '52px', objectFit: 'cover', borderRadius: '6px',
+              border: '1px dashed #D4A57480', opacity: 0.85,
+            }}
+            onError={() => setFallbackBroken(true)} />
         ) : (
           <div style={{
             width: '52px', height: '52px', borderRadius: '6px',
@@ -388,6 +416,15 @@ function ImageCell({ value, kind, name, token, onChange }) {
           style={{ background: 'transparent', border: 'none', color: '#D6454580', cursor: 'pointer', fontSize: '0.65rem', padding: 0 }}>
           remove
         </button>
+      )}
+      {showingFallback && !busy && (
+        <div style={{
+          fontSize: '0.6rem',
+          color: '#D4A57490',
+          fontFamily: "'Oswald', sans-serif",
+          letterSpacing: '0.5px',
+          textTransform: 'uppercase',
+        }}>bundled</div>
       )}
       {err && <div style={{ fontSize: '0.65rem', color: '#D64545', maxWidth: '70px', textAlign: 'center' }}>{err}</div>}
     </div>
