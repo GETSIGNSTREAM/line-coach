@@ -67,6 +67,9 @@ export default function LineCoachDisplay({ storeId }) {
   const [config, setConfig] = useState(null);
   const [now, setNow] = useState(new Date());
   const [qualityTipIndex, setQualityTipIndex] = useState(0);
+  // Focus mode (1 order on board) rotates through every item on the
+  // order so each dish gets its own coaching moment in turn.
+  const [focusItemIndex, setFocusItemIndex] = useState(0);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const supabaseRef = useRef(null);
   const audioCtxRef = useRef(null);
@@ -117,6 +120,15 @@ export default function LineCoachDisplay({ storeId }) {
   useEffect(() => {
     const tipInterval = (config?.settings?.quality_coach_interval || 30) * 1000;
     const interval = setInterval(() => setQualityTipIndex((i) => i + 1), tipInterval);
+    return () => clearInterval(interval);
+  }, [config]);
+
+  // Focus mode rotation — advances the focused item every 8 seconds so
+  // every dish on a single-order ticket gets its own coaching panel.
+  // Configurable via settings.focus_rotation_seconds (default 8).
+  useEffect(() => {
+    const focusInterval = (config?.settings?.focus_rotation_seconds || 8) * 1000;
+    const interval = setInterval(() => setFocusItemIndex((i) => i + 1), focusInterval);
     return () => clearInterval(interval);
   }, [config]);
 
@@ -330,19 +342,33 @@ export default function LineCoachDisplay({ storeId }) {
   const tips = (config?.quality_tips || [])
     .map(normalizeTip)
     .filter((t) => (t.en && t.en.trim()) || (t.es && t.es.trim()));
-  const isSlowPeriod = orders.length === 0;
+
+  // Stale-ticket filter: Toast doesn't reliably send completed/voided
+  // events for many orders, so without this active orders pile up
+  // forever. Drop anything older than max_ticket_minutes from the
+  // display (rows stay in the DB for analytics).
+  const maxTicketMin = config?.hold_times?.max_ticket_minutes || 60;
+  const apiOrderCount = orders.length;
+  // eslint-disable-next-line no-redeclare, no-shadow-restricted-names
+  const visibleOrders = orders.filter((o) => {
+    const t = new Date(o.toast_created_at || o.fire_at || o.created_at).getTime();
+    if (!t || Number.isNaN(t)) return true;
+    return (now.getTime() - t) / 60_000 < maxTicketMin;
+  });
+  const staleCount = apiOrderCount - visibleOrders.length;
+  const isSlowPeriod = visibleOrders.length === 0;
 
   // Side Batching: aggregate sides across all active orders
   function getBatchedSides() {
     const sideCounts = {};
-    for (const order of orders) {
+    for (const order of visibleOrders) {
       for (const side of order.sides || []) {
         const name = side.name || side;
         sideCounts[name] = (sideCounts[name] || 0) + (side.quantity || 1);
       }
     }
     // Also count sides that appear as items
-    for (const order of orders) {
+    for (const order of visibleOrders) {
       for (const item of order.items || []) {
         const sideMatch = configSides.find((s) => s.name === item.name);
         if (sideMatch) {
@@ -381,7 +407,7 @@ export default function LineCoachDisplay({ storeId }) {
   function getOrderSequence() {
     const tenMinFromNow = now.getTime() + 10 * 60_000;
 
-    const orderList = orders
+    const orderList = visibleOrders
       .filter((order) => {
         // Hide future orders until 10 min before fire_at
         const fireAt = new Date(order.fire_at || order.created_at).getTime();
@@ -488,10 +514,14 @@ export default function LineCoachDisplay({ storeId }) {
   // doesn't need the chrome.
   if (density === 'focus') {
     const order = visibleNow[0];
-    // Pick the "primary" item for the photo + coach tip = longest-cook-
-    // time item (the most attention-demanding dish on the ticket).
-    const primaryItem = [...order.items].sort((a, b) => (b.cookTime || 0) - (a.cookTime || 0))[0] || order.items[0];
-    const secondaryItems = order.items.filter((it) => it !== primaryItem);
+    // Order items by longest-cook-time first so the rotation starts with
+    // the most attention-demanding dish, then cycles through every item.
+    const orderedItems = [...order.items].sort((a, b) => (b.cookTime || 0) - (a.cookTime || 0));
+    // Rotate through items every focus_rotation_seconds (default 8s).
+    // Single-item orders just sit on item 0 forever (no animation churn).
+    const itemCount = Math.max(1, orderedItems.length);
+    const primaryItem = orderedItems[focusItemIndex % itemCount] || orderedItems[0];
+    const secondaryItems = orderedItems.filter((it) => it !== primaryItem);
     const primaryMenu = menuItems.find((m) => m.name === primaryItem?.name);
     const primaryCoachTip = primaryMenu?.coach_tip ? normalizeTip(primaryMenu.coach_tip) : null;
     // Fallback to a rotating store-level quality tip when the focused
@@ -607,7 +637,9 @@ export default function LineCoachDisplay({ storeId }) {
         </div>
 
         {/* Two-column body: photo + coach tip ─────────── */}
-        <div style={{
+        {/* `key` includes the rotating item index so each rotation
+            re-mounts the block and triggers the fade-in animation. */}
+        <div key={`focus-${focusItemIndex % itemCount}`} style={{
           display: 'flex',
           gap: '24px',
           padding: '16px',
@@ -688,7 +720,7 @@ export default function LineCoachDisplay({ storeId }) {
                   fontFamily: "'Oswald', sans-serif",
                   letterSpacing: '2px',
                   textTransform: 'uppercase',
-                }}>Also on this order</div>
+                }}>Also on this order · rotating</div>
                 {secondaryItems.map((it, idx) => (
                   <div key={idx} style={{
                     fontSize: 'clamp(1.1rem, 1.5vw, 1.5rem)',
@@ -728,14 +760,35 @@ export default function LineCoachDisplay({ storeId }) {
             minHeight: 0,
           }}>
             <div style={{
-              fontSize: 'clamp(0.95rem, 1.2vw, 1.3rem)',
-              color: BRAND.gold,
-              fontFamily: "'Oswald', sans-serif",
-              fontWeight: 700,
-              letterSpacing: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '14px',
               marginBottom: '18px',
             }}>
-              {primaryCoachTip && (primaryCoachTip.en || primaryCoachTip.es) ? 'COACH' : 'QUALITY COACH'}
+              <div style={{
+                fontSize: 'clamp(0.95rem, 1.2vw, 1.3rem)',
+                color: BRAND.gold,
+                fontFamily: "'Oswald', sans-serif",
+                fontWeight: 700,
+                letterSpacing: '4px',
+              }}>
+                {primaryCoachTip && (primaryCoachTip.en || primaryCoachTip.es) ? 'COACH' : 'QUALITY COACH'}
+              </div>
+              {/* Rotation dots — only show when there's more than one item
+                  so the cook knows the panel cycles through every dish. */}
+              {itemCount > 1 && (
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginLeft: 'auto' }}>
+                  {orderedItems.map((_, di) => (
+                    <div key={di} style={{
+                      width: '10px',
+                      height: '10px',
+                      borderRadius: '50%',
+                      background: di === (focusItemIndex % itemCount) ? BRAND.gold : `${BRAND.gold}40`,
+                      transition: 'background 200ms',
+                    }} />
+                  ))}
+                </div>
+              )}
             </div>
             {tipEn && (
               <div style={{ marginBottom: tipEs ? 'clamp(1.5vh, 2vh, 3vh)' : 0 }}>
@@ -804,7 +857,7 @@ export default function LineCoachDisplay({ storeId }) {
           50%      { box-shadow: 0 0 0 8px rgba(214, 69, 69, 0); }
         }
       `}</style>
-      <Header now={now} orderCount={orders.length} />
+      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} />
       {showAudioUnlock && <AudioUnlockBanner onUnlock={unlockAudio} />}
 
       <div style={s.mainGrid}>
@@ -1206,7 +1259,7 @@ function AudioUnlockBanner({ onUnlock }) {
   );
 }
 
-function Header({ now, orderCount }) {
+function Header({ now, orderCount, staleCount = 0 }) {
   return (
     <div style={s.header}>
       <div style={s.headerLeft}>
@@ -1217,6 +1270,23 @@ function Header({ now, orderCount }) {
         <span style={s.ticketCount}>
           {orderCount} ACTIVE ORDER{orderCount !== 1 ? 'S' : ''}
         </span>
+        {staleCount > 0 && (
+          <span style={{
+            marginLeft: '12px',
+            padding: '2px 8px',
+            borderRadius: '999px',
+            background: 'rgba(214, 69, 69, 0.15)',
+            color: '#D64545',
+            fontSize: '0.7rem',
+            fontFamily: "'Oswald', sans-serif",
+            letterSpacing: '1px',
+            textTransform: 'uppercase',
+            fontWeight: 700,
+            verticalAlign: 'middle',
+          }}>
+            {staleCount} stale hidden
+          </span>
+        )}
       </div>
       <span style={s.clock}>{now.toLocaleTimeString()}</span>
     </div>
