@@ -37,9 +37,26 @@ const BRAND = {
   sage: '#A8B5A0',
 };
 
-// Side name → image filename mapping
-function getSideImageUrl(name) {
-  const slug = name.toLowerCase().replace(/[&]/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
+// Detect allergy / dietary callouts in order notes. Returns the cleaned
+// text to highlight (or null when the note isn't allergy-related).
+// Trigger words are intentionally broad — a false positive (e.g. "no
+// onions" highlighted as allergy) is far less costly than missing a
+// real allergen warning.
+const ALLERGY_RE = /\b(allerg|gluten|celiac|nut|peanut|tree[- ]?nut|cashew|almond|walnut|pecan|shellfish|shrimp|prawn|crab|lobster|dairy|lactose|milk|cheese|egg|soy|sesame|fish|kosher|halal|vegan|vegetarian)\b/i;
+function isAllergyNote(notes) {
+  if (!notes || typeof notes !== 'string') return false;
+  return ALLERGY_RE.test(notes);
+}
+
+// Side / item name → image URL. If the brand config has an explicit
+// image_url for this name, use that (Supabase Storage). Otherwise fall
+// back to the legacy /sides/<slug>.jpg path so existing photos still work.
+function getSideImageUrl(name, configItems, configSides) {
+  const lower = (name || '').toLowerCase();
+  const findIn = (arr) => (arr || []).find((row) => (row?.name || '').toLowerCase() === lower);
+  const match = findIn(configItems) || findIn(configSides);
+  if (match?.image_url) return match.image_url;
+  const slug = lower.replace(/[&]/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
   return `/sides/${slug}.jpg`;
 }
 
@@ -54,6 +71,11 @@ export default function LineCoachDisplay({ storeId }) {
   const supabaseRef = useRef(null);
   const audioCtxRef = useRef(null);
   const lastOrderCountRef = useRef(null);
+  // Track which order ids have already triggered a warning beep so we
+  // don't re-trigger every render once they're in the yellow zone.
+  const warnedOrderIdsRef = useRef(new Set());
+  // Interval handle for the repeating danger tone.
+  const dangerIntervalRef = useRef(null);
 
   useEffect(() => {
     if (supabaseUrl && supabaseAnonKey) {
@@ -173,6 +195,52 @@ export default function LineCoachDisplay({ storeId }) {
     }
   }
 
+  // Single soft mid-tone beep — fires once when an order crosses into
+  // the warning (yellow) zone. Quieter and lower than the new-order
+  // chime so cooks distinguish it.
+  function playWarning() {
+    const ctx = ensureAudioCtx();
+    if (!ctx || ctx.state === 'suspended') return;
+    const volume = config?.settings?.alerts_volume ?? 0.5;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 660; // E5 — neutral attention tone
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(volume * 0.35, t0 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.35);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + 0.4);
+  }
+
+  // Two-tone urgent beep — fires every 30s while any order is in the
+  // danger (red) zone. Sharper and louder than the warning so it cuts
+  // through kitchen noise and signals "act now".
+  function playDanger() {
+    const ctx = ensureAudioCtx();
+    if (!ctx || ctx.state === 'suspended') return;
+    const volume = config?.settings?.alerts_volume ?? 0.5;
+    const notes = [
+      { freq: 880, start: 0,    dur: 0.16 },  // A5
+      { freq: 880, start: 0.22, dur: 0.16 },  // A5 again — pulse pattern
+    ];
+    const t0 = ctx.currentTime;
+    for (const n of notes) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = n.freq;
+      gain.gain.setValueAtTime(0, t0 + n.start);
+      gain.gain.linearRampToValueAtTime(volume * 0.55, t0 + n.start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + n.start + n.dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0 + n.start);
+      osc.stop(t0 + n.start + n.dur + 0.05);
+    }
+  }
+
   function unlockAudio() {
     const ctx = ensureAudioCtx();
     if (!ctx) return;
@@ -196,6 +264,61 @@ export default function LineCoachDisplay({ storeId }) {
     // playChime closes over config; reads it at call time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orders.length, config, audioUnlocked]);
+
+  // Forget warned-order tracking for orders that are no longer active so
+  // a re-fired ticket can warn again next time it ages into yellow.
+  useEffect(() => {
+    const liveIds = new Set(orders.map((o) => o.id).filter(Boolean));
+    for (const id of warnedOrderIdsRef.current) {
+      if (!liveIds.has(id)) warnedOrderIdsRef.current.delete(id);
+    }
+  }, [orders]);
+
+  // Escalating audio: single warning beep when an order first crosses
+  // the yellow threshold; repeating danger tone every 30s while any
+  // order is in red. Both respect the alerts_enabled / alerts_volume
+  // config and require the user to have unlocked audio first.
+  useEffect(() => {
+    const enabled = config?.settings?.alerts_enabled !== false;
+    if (!enabled || !audioUnlocked) return undefined;
+
+    const warningMin = config?.settings?.ticket_warning_minutes || 5;
+    const dangerMin = config?.settings?.ticket_danger_minutes || 8;
+
+    let anyInDanger = false;
+    for (const order of orders) {
+      const orderTime = new Date(order.toast_created_at || order.fire_at || order.created_at);
+      const elapsedMin = (now.getTime() - orderTime.getTime()) / 60_000;
+      if (elapsedMin >= dangerMin) {
+        anyInDanger = true;
+      } else if (elapsedMin >= warningMin && order.id && !warnedOrderIdsRef.current.has(order.id)) {
+        // First time crossing yellow → fire the warning beep once.
+        warnedOrderIdsRef.current.add(order.id);
+        playWarning();
+      }
+    }
+
+    if (anyInDanger && !dangerIntervalRef.current) {
+      // Beep immediately so the cook hears it now, then every 30s.
+      playDanger();
+      dangerIntervalRef.current = setInterval(playDanger, 30_000);
+    } else if (!anyInDanger && dangerIntervalRef.current) {
+      clearInterval(dangerIntervalRef.current);
+      dangerIntervalRef.current = null;
+    }
+
+    return () => {};
+    // playWarning / playDanger close over config; safe to omit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, now, config, audioUnlocked]);
+
+  // Stop the danger interval when the component unmounts.
+  useEffect(() => () => {
+    if (dangerIntervalRef.current) {
+      clearInterval(dangerIntervalRef.current);
+      dangerIntervalRef.current = null;
+    }
+  }, []);
 
   // ── Data Processing ─────────────────────────────────
 
@@ -349,6 +472,12 @@ export default function LineCoachDisplay({ storeId }) {
 
   return (
     <div style={s.container}>
+      <style>{`
+        @keyframes lcAllergyPulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.85); }
+          50%      { box-shadow: 0 0 0 8px rgba(214, 69, 69, 0); }
+        }
+      `}</style>
       <Header now={now} orderCount={orders.length} />
       {showAudioUnlock && <AudioUnlockBanner onUnlock={unlockAudio} />}
 
@@ -382,12 +511,41 @@ export default function LineCoachDisplay({ storeId }) {
                       const sq = side.quantity || 1;
                       return sq > 1 ? `${sq}x ${sn}` : sn;
                     }).join(', ');
+                    // Allergy / dietary callout: rendered as a full-width
+                    // red banner ABOVE the order row so cooks can't miss
+                    // it. Other notes still render inline below the items.
+                    const allergyNote = isAllergyNote(order.notes) ? order.notes : null;
+                    const inlineNote = allergyNote ? null : order.notes;
 
                     return (
                       <div key={oi} style={{
-                        display: 'flex',
                         borderTop: oi > 0 ? `2px solid ${BRAND.gold}40` : 'none',
                         padding: '6px 0',
+                      }}>
+                      {allergyNote && (
+                        <div style={{
+                          background: BRAND.red,
+                          color: BRAND.white,
+                          fontFamily: "'Oswald', sans-serif",
+                          fontWeight: 700,
+                          letterSpacing: '2px',
+                          textTransform: 'uppercase',
+                          fontSize: '1.5rem',
+                          padding: '8px 16px',
+                          marginBottom: '6px',
+                          borderRadius: '4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          animation: 'lcAllergyPulse 1.4s ease-in-out infinite',
+                        }}>
+                          <span style={{ fontSize: '1.7rem' }}>⚠</span>
+                          <span style={{ fontWeight: 800 }}>ALLERGY:</span>
+                          <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 600 }}>{allergyNote}</span>
+                        </div>
+                      )}
+                      <div style={{
+                        display: 'flex',
                       }}>
                         {/* Left sidebar: check info + timer */}
                         <div style={{
@@ -478,7 +636,7 @@ export default function LineCoachDisplay({ storeId }) {
                               minWidth: 0,
                             }}>
                               <img
-                                src={getSideImageUrl(item.name)}
+                                src={getSideImageUrl(item.name, menuItems, configSides)}
                                 alt={item.name}
                                 style={{
                                   width: '48px',
@@ -522,7 +680,7 @@ export default function LineCoachDisplay({ storeId }) {
                               )}
                             </div>
                           ))}
-                          {(sidesText || order.notes) && (
+                          {(sidesText || inlineNote) && (
                             <div style={{
                               fontSize: '1.4rem',
                               lineHeight: 1.3,
@@ -534,16 +692,17 @@ export default function LineCoachDisplay({ storeId }) {
                               {sidesText && (
                                 <span style={{ color: BRAND.white, fontWeight: 700 }}>w/ {sidesText}</span>
                               )}
-                              {order.notes && (
+                              {inlineNote && (
                                 <span style={{
                                   color: BRAND.gold,
                                   fontWeight: 700,
                                   marginLeft: sidesText ? '10px' : 0,
-                                }}>⚠ {order.notes}</span>
+                                }}>⚠ {inlineNote}</span>
                               )}
                             </div>
                           )}
                         </div>
+                      </div>
                       </div>
                     );
                   })}
@@ -577,7 +736,7 @@ export default function LineCoachDisplay({ storeId }) {
               const batchSize = sideConfig?.batch_size || 4;
               const batchesNeeded = Math.ceil(count / batchSize);
               const cookTime = sideConfig?.cook_time || 0;
-              const imageUrl = getSideImageUrl(name);
+              const imageUrl = getSideImageUrl(name, menuItems, configSides);
 
               // Dynamic sizing based on number of sides — compact for narrow column
               const n = batchedSides.length;
