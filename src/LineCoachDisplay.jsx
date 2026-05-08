@@ -70,7 +70,11 @@ export default function LineCoachDisplay({ storeId }) {
   // Focus mode (1 order on board) rotates through every item on the
   // order so each dish gets its own coaching moment in turn.
   const [focusItemIndex, setFocusItemIndex] = useState(0);
-  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  // Audio unlock is best-effort: kitchen monitors have no mouse, so we
+  // never show a "tap to enable" prompt. If the browser blocks
+  // AudioContext until a user gesture, the chime silently fails — staff
+  // can mute the monitor at the OS/hardware level if needed. We still
+  // try to resume on any incidental interaction.
   const supabaseRef = useRef(null);
   const audioCtxRef = useRef(null);
   const lastOrderCountRef = useRef(null);
@@ -171,17 +175,50 @@ export default function LineCoachDisplay({ storeId }) {
   // ── Audio alerts ────────────────────────────────────
 
   function ensureAudioCtx() {
-    if (audioCtxRef.current) return audioCtxRef.current;
     if (typeof window === 'undefined') return null;
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return null;
-    try {
-      audioCtxRef.current = new Ctx();
-    } catch {
-      return null;
+    if (!audioCtxRef.current) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      try {
+        audioCtxRef.current = new Ctx();
+      } catch {
+        return null;
+      }
+    }
+    // Best-effort resume — if the browser still requires a gesture this
+    // is a no-op until one happens. We never block the call site on it.
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(() => {});
     }
     return audioCtxRef.current;
   }
+
+  // Try to unlock audio on any incidental interaction with the page —
+  // a tap, key press, or even a stray click. Most kitchens never touch
+  // the monitor, but if they do, we capitalize on it. One-shot.
+  useEffect(() => {
+    let unlocked = false;
+    const handler = () => {
+      if (unlocked) return;
+      unlocked = true;
+      ensureAudioCtx();
+      window.removeEventListener('pointerdown', handler);
+      window.removeEventListener('keydown', handler);
+      window.removeEventListener('touchstart', handler);
+    };
+    window.addEventListener('pointerdown', handler);
+    window.addEventListener('keydown', handler);
+    window.addEventListener('touchstart', handler);
+    // Also attempt right now — some browsers (especially ones running
+    // in PWA/kiosk mode) start AudioContext in 'running' state.
+    ensureAudioCtx();
+    return () => {
+      window.removeEventListener('pointerdown', handler);
+      window.removeEventListener('keydown', handler);
+      window.removeEventListener('touchstart', handler);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function playChime() {
     const ctx = ensureAudioCtx();
@@ -253,29 +290,19 @@ export default function LineCoachDisplay({ storeId }) {
     }
   }
 
-  function unlockAudio() {
-    const ctx = ensureAudioCtx();
-    if (!ctx) return;
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(() => setAudioUnlocked(true)).catch(() => {});
-    } else {
-      setAudioUnlocked(true);
-    }
-  }
-
   // Detect new orders and play chime when count increases.
   useEffect(() => {
     const enabled = config?.settings?.alerts_enabled !== false;
     const prev = lastOrderCountRef.current;
     const curr = orders.length;
     // Skip first observation (initial load) and any non-increasing change.
-    if (prev != null && curr > prev && enabled && audioUnlocked) {
+    if (prev != null && curr > prev && enabled) {
       playChime();
     }
     lastOrderCountRef.current = curr;
     // playChime closes over config; reads it at call time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders.length, config, audioUnlocked]);
+  }, [orders.length, config]);
 
   // Forget warned-order tracking for orders that are no longer active so
   // a re-fired ticket can warn again next time it ages into yellow.
@@ -289,10 +316,11 @@ export default function LineCoachDisplay({ storeId }) {
   // Escalating audio: single warning beep when an order first crosses
   // the yellow threshold; repeating danger tone every 30s while any
   // order is in red. Both respect the alerts_enabled / alerts_volume
-  // config and require the user to have unlocked audio first.
+  // config. The audio context resumes on its own once any interaction
+  // has happened; before then, calls are silent no-ops.
   useEffect(() => {
     const enabled = config?.settings?.alerts_enabled !== false;
-    if (!enabled || !audioUnlocked) return undefined;
+    if (!enabled) return undefined;
 
     const warningMin = config?.settings?.ticket_warning_minutes || 5;
     const dangerMin = config?.settings?.ticket_danger_minutes || 8;
@@ -322,7 +350,7 @@ export default function LineCoachDisplay({ storeId }) {
     return () => {};
     // playWarning / playDanger close over config; safe to omit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, now, config, audioUnlocked]);
+  }, [orders, now, config]);
 
   // Stop the danger interval when the component unmounts.
   useEffect(() => () => {
@@ -458,8 +486,6 @@ export default function LineCoachDisplay({ storeId }) {
 
   // ── Quality Coach mode ──────────────────────────────
 
-  const showAudioUnlock = (config?.settings?.alerts_enabled !== false) && !audioUnlocked;
-
   if (isSlowPeriod && tips.length > 0) {
     const tip = tips[qualityTipIndex % tips.length];
     const enText = tip.en && tip.en.trim();
@@ -468,7 +494,6 @@ export default function LineCoachDisplay({ storeId }) {
       <div style={s.container}>
         <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
         <Header now={now} orderCount={0} staleCount={staleCount} />
-        {showAudioUnlock && <AudioUnlockBanner onUnlock={unlockAudio} />}
         <div style={s.qualityCoach}>
           <div style={s.qualityLabel}>QUALITY COACH</div>
           <div style={s.qualityTipBlock} key={qualityTipIndex}>
@@ -562,7 +587,6 @@ export default function LineCoachDisplay({ storeId }) {
           @keyframes lcFocusFade { from { opacity: 0; } to { opacity: 1; } }
         `}</style>
         <Header now={now} orderCount={1} />
-        {showAudioUnlock && <AudioUnlockBanner onUnlock={unlockAudio} />}
 
         {allergyNote && (
           <div style={{
@@ -858,7 +882,6 @@ export default function LineCoachDisplay({ storeId }) {
         }
       `}</style>
       <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} />
-      {showAudioUnlock && <AudioUnlockBanner onUnlock={unlockAudio} />}
 
       <div style={s.mainGrid}>
         {/* Left Column: Fire Order — grouped by order */}
@@ -1230,34 +1253,6 @@ export default function LineCoachDisplay({ storeId }) {
 }
 
 // ── Header Component ────────────────────────────────────
-
-function AudioUnlockBanner({ onUnlock }) {
-  return (
-    <button
-      onClick={onUnlock}
-      style={{
-        position: 'fixed',
-        top: '12px',
-        right: '12px',
-        zIndex: 1000,
-        background: BRAND.gold,
-        color: BRAND.charcoal,
-        border: 'none',
-        padding: '8px 14px',
-        borderRadius: '999px',
-        cursor: 'pointer',
-        fontFamily: "'Oswald', sans-serif",
-        letterSpacing: '1.5px',
-        textTransform: 'uppercase',
-        fontSize: '0.75rem',
-        fontWeight: 700,
-        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-      }}
-    >
-      🔔 Tap to enable sound
-    </button>
-  );
-}
 
 function Header({ now, orderCount, staleCount = 0 }) {
   return (
