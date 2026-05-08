@@ -420,29 +420,53 @@ export default function LineCoachDisplay({ storeId }) {
   //     side has a slightly different label than what Toast sent.
   function getBatchedSides() {
     const sideCounts = {};            // canonicalName → total qty
-    const credited = new Set();       // `${orderId}::${canonicalName}` to prevent double-count
+    // Track per (order id, canonical name) what we've already credited,
+    // and HOW MUCH. Using a count rather than a boolean lets us still
+    // capture additional contributions from the items pass when the
+    // sides-pass entry was less than what's actually on the order
+    // (rare, but defensive).
+    const credited = new Map();       // `${orderId}::${canonicalName}` → qty already added
     const findConfig = (canonicalName) => {
       if (!canonicalName) return null;
       const lower = canonicalName.toLowerCase();
       return configSides.find((s) => (s?.name || '').toLowerCase() === lower) || null;
     };
+    // Coerce quantity to a positive integer. Previously this used
+    // Number.isFinite(side.quantity) which returns false for a string
+    // like "3" — and any falsy result fell back to 1 — silently
+    // undercounting if Toast ever shipped a stringified quantity.
+    // Now: parse, default to 1 only if truly missing/NaN, never 0.
+    const parseQty = (raw) => {
+      if (raw === null || raw === undefined) return 1;
+      const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+      if (!Number.isFinite(n) || n <= 0) return 1;
+      return n;
+    };
+    // Build a stable key for an order even when fields are sparse.
+    // `id` (UUID from DB) is the strongest signal; falls back to
+    // order_number + toast_order_id; finally to a synthetic per-call
+    // index so two ID-less orders never collide into the same bucket.
+    let synth = 0;
+    const orderKey = (o) => o?.id || o?.toast_order_id || o?.order_number || `__synth_${++synth}__`;
 
     for (const order of visibleOrders) {
-      const oid = order.id || order.order_number || '';
+      const oid = orderKey(order);
       for (const side of order.sides || []) {
         const rawName = side?.name || (typeof side === 'string' ? side : null);
         if (!rawName) continue;
         const canonical = canonicalSideName(rawName) || rawName;
-        const qty = Number.isFinite(side?.quantity) ? side.quantity : 1;
-        if (qty <= 0) continue;
+        const qty = parseQty(side?.quantity);
         sideCounts[canonical] = (sideCounts[canonical] || 0) + qty;
-        credited.add(`${oid}::${canonical}`);
+        const key = `${oid}::${canonical}`;
+        credited.set(key, (credited.get(key) || 0) + qty);
       }
     }
     // Catch sides that were inlined as items rather than pushed to
-    // order.sides. Skip if already credited from the sides array.
+    // order.sides (rare, but covers Toast inlining a side as an item).
+    // We still skip when the sides-pass already credited this
+    // (orderId, canonicalName) since the webhook normally extracts both.
     for (const order of visibleOrders) {
-      const oid = order.id || order.order_number || '';
+      const oid = orderKey(order);
       for (const item of order.items || []) {
         if (!item?.name) continue;
         if (!isCanonicalSide(item.name)) continue;
@@ -450,10 +474,9 @@ export default function LineCoachDisplay({ storeId }) {
         if (!canonical) continue;
         const key = `${oid}::${canonical}`;
         if (credited.has(key)) continue;
-        const qty = Number.isFinite(item?.quantity) ? item.quantity : 1;
-        if (qty <= 0) continue;
+        const qty = parseQty(item?.quantity);
         sideCounts[canonical] = (sideCounts[canonical] || 0) + qty;
-        credited.add(key);
+        credited.set(key, qty);
       }
     }
     // Sort by cook time (longest first), then by count
