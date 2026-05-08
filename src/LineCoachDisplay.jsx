@@ -49,6 +49,14 @@ function isAllergyNote(notes) {
   return ALLERGY_RE.test(notes);
 }
 
+// The banner already prints "ALLERGY:" as a label, so strip a leading
+// "Allergy:" / "Allergens:" / "Allergy -" from the note text to avoid
+// the duplicated word. Pure copy hygiene.
+function trimAllergyPrefix(notes) {
+  if (!notes) return notes;
+  return String(notes).replace(/^\s*allerg(?:y|ens?|ic)\s*[:.\-—]\s*/i, '').trim();
+}
+
 // Side / item name → image URL. If the brand config has an explicit
 // image_url for this name, use that (Supabase Storage). Otherwise fall
 // back to the legacy /sides/<slug>.jpg path so existing photos still work.
@@ -541,17 +549,18 @@ export default function LineCoachDisplay({ storeId }) {
         <div style={s.qualityCoach}>
           <div style={s.qualityLabel}>QUALITY COACH</div>
           <div style={s.qualityTipBlock} key={qualityTipIndex}>
+            {/* Language labels removed — Playfair English vs italic
+                cream Spanish is enough visual signal on a kitchen
+                monitor. Less to read, faster to absorb. */}
             {enText && (
               <div style={s.qualityLangSection}>
-                <div style={s.qualityLangLabel}>ENGLISH</div>
                 <div style={s.qualityTipEn}>{enText}</div>
               </div>
             )}
             {enText && esText && <div style={s.qualityDivider} />}
             {esText && (
               <div style={s.qualityLangSection}>
-                <div style={{ ...s.qualityLangLabel, color: BRAND.sage }}>ESPAÑOL</div>
-                <div style={s.qualityTipEs}>{esText}</div>
+                <div style={{ ...s.qualityTipEs, fontStyle: 'italic' }}>{esText}</div>
               </div>
             )}
           </div>
@@ -650,8 +659,8 @@ export default function LineCoachDisplay({ storeId }) {
             animation: 'lcAllergyPulse 1.4s ease-in-out infinite',
           }}>
             <span style={{ fontSize: '2rem' }}>⚠</span>
-            <span>ALLERGY:</span>
-            <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 700 }}>{allergyNote}</span>
+            <span>ALLERGY</span>
+            <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 700 }}>{trimAllergyPrefix(allergyNote)}</span>
           </div>
         )}
 
@@ -788,7 +797,7 @@ export default function LineCoachDisplay({ storeId }) {
                   fontFamily: "'Oswald', sans-serif",
                   letterSpacing: '2px',
                   textTransform: 'uppercase',
-                }}>Also on this order · rotating</div>
+                }}>Also on order</div>
                 {secondaryItems.map((it, idx) => (
                   <div key={idx} style={{
                     fontSize: 'clamp(1.1rem, 1.5vw, 1.5rem)',
@@ -858,23 +867,17 @@ export default function LineCoachDisplay({ storeId }) {
                 </div>
               )}
             </div>
+            {/* EN and ES blocks — typography (color + size) already
+                differentiates the languages, so explicit ENGLISH /
+                ESPAÑOL labels are pure noise on a kitchen monitor. */}
             {tipEn && (
-              <div style={{ marginBottom: tipEs ? 'clamp(1.5vh, 2vh, 3vh)' : 0 }}>
-                <div style={{
-                  fontSize: 'clamp(0.85rem, 1vw, 1.1rem)',
-                  color: BRAND.gold,
-                  fontFamily: "'Oswald', sans-serif",
-                  letterSpacing: '3px',
-                  marginBottom: '10px',
-                  opacity: 0.8,
-                }}>ENGLISH</div>
-                <div style={{
-                  fontSize: 'clamp(1.6rem, 2.6vw, 2.6rem)',
-                  color: BRAND.bone,
-                  fontFamily: "'Playfair Display', Georgia, serif",
-                  lineHeight: 1.3,
-                }}>{tipEn}</div>
-              </div>
+              <div style={{
+                marginBottom: tipEs ? 'clamp(1.5vh, 2vh, 3vh)' : 0,
+                fontSize: 'clamp(1.6rem, 2.6vw, 2.6rem)',
+                color: BRAND.bone,
+                fontFamily: "'Playfair Display', Georgia, serif",
+                lineHeight: 1.3,
+              }}>{tipEn}</div>
             )}
             {tipEn && tipEs && (
               <div style={{
@@ -885,22 +888,13 @@ export default function LineCoachDisplay({ storeId }) {
               }} />
             )}
             {tipEs && (
-              <div>
-                <div style={{
-                  fontSize: 'clamp(0.85rem, 1vw, 1.1rem)',
-                  color: BRAND.sage,
-                  fontFamily: "'Oswald', sans-serif",
-                  letterSpacing: '3px',
-                  marginBottom: '10px',
-                  opacity: 0.8,
-                }}>ESPAÑOL</div>
-                <div style={{
-                  fontSize: 'clamp(1.4rem, 2.3vw, 2.3rem)',
-                  color: BRAND.cream,
-                  fontFamily: "'Playfair Display', Georgia, serif",
-                  lineHeight: 1.3,
-                }}>{tipEs}</div>
-              </div>
+              <div style={{
+                fontSize: 'clamp(1.4rem, 2.3vw, 2.3rem)',
+                color: BRAND.cream,
+                fontFamily: "'Playfair Display', Georgia, serif",
+                lineHeight: 1.3,
+                fontStyle: 'italic',
+              }}>{tipEs}</div>
             )}
             {!tipEn && !tipEs && (
               <div style={{
@@ -908,8 +902,8 @@ export default function LineCoachDisplay({ storeId }) {
                 color: BRAND.cream,
                 fontFamily: "'Playfair Display', Georgia, serif",
                 fontStyle: 'italic',
-                opacity: 0.7,
-              }}>No coaching tip configured for this dish yet. Add one in Admin → Menu.</div>
+                opacity: 0.5,
+              }}>—</div>
             )}
           </div>
         </div>
@@ -993,8 +987,8 @@ export default function LineCoachDisplay({ storeId }) {
                           fontWeight: 700,
                           letterSpacing: '2px',
                           textTransform: 'uppercase',
-                          fontSize: '1.5rem',
-                          padding: '8px 16px',
+                          fontSize: isComfortable ? '1.8rem' : '1.5rem',
+                          padding: isComfortable ? '12px 20px' : '8px 16px',
                           marginBottom: '6px',
                           borderRadius: '4px',
                           display: 'flex',
@@ -1003,8 +997,8 @@ export default function LineCoachDisplay({ storeId }) {
                           animation: 'lcAllergyPulse 1.4s ease-in-out infinite',
                         }}>
                           <span style={{ fontSize: '1.7rem' }}>⚠</span>
-                          <span style={{ fontWeight: 800 }}>ALLERGY:</span>
-                          <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 600 }}>{allergyNote}</span>
+                          <span style={{ fontWeight: 800 }}>ALLERGY</span>
+                          <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 600 }}>{trimAllergyPrefix(allergyNote)}</span>
                         </div>
                       )}
                       <div style={{
@@ -1175,10 +1169,11 @@ export default function LineCoachDisplay({ storeId }) {
                       textAlign: 'center',
                       color: BRAND.gold,
                       fontFamily: "'Oswald', sans-serif",
-                      fontSize: '1rem',
-                      letterSpacing: '1px',
+                      fontSize: '1.4rem',
+                      fontWeight: 700,
+                      letterSpacing: '2px',
                     }}>
-                      +{hiddenCount} MORE ORDER{hiddenCount > 1 ? 'S' : ''}
+                      + {hiddenCount}
                     </div>
                   )}
                 </>
@@ -1242,20 +1237,25 @@ export default function LineCoachDisplay({ storeId }) {
                       letterSpacing: '0.5px',
                       lineHeight: 1.2,
                     }}>{name}</div>
-                    {(cookTime > 0 || batchesNeeded > 0) && (
+                    {batchesNeeded > 1 && (
                       <div style={{
-                        fontSize: `clamp(0.7rem, ${actionSize}, 1.2rem)`,
+                        // Line Coach is for quality + accuracy, NOT
+                        // fire-timing (Toast KDS already handles that).
+                        // Show the batch count as a quiet quality nudge:
+                        // "you'll need 2 batches of this side, build to
+                        // batch_size for consistency" — no verbs, no
+                        // minutes. We only show it when batches > 1
+                        // since a single batch is the default mental
+                        // model and doesn't need reinforcement.
+                        fontSize: `clamp(0.7rem, ${actionSize}, 1.1rem)`,
                         fontWeight: 700,
-                        color: BRAND.terracotta,
+                        color: BRAND.gold,
                         fontFamily: "'Oswald', sans-serif",
                         letterSpacing: '1px',
                         marginTop: '2px',
+                        opacity: 0.85,
                       }}>
-                        {/* Action first, cook-time second — cook reads
-                            "DROP 3" before "5m" so the action lands. */}
-                        {batchesNeeded > 0 && <span>DROP {batchesNeeded}</span>}
-                        {batchesNeeded > 0 && cookTime > 0 && <span> · </span>}
-                        {cookTime > 0 && <span>{cookTime}m</span>}
+                        {batchesNeeded} BATCHES
                       </div>
                     )}
                   </div>
@@ -1282,16 +1282,10 @@ export default function LineCoachDisplay({ storeId }) {
               <div style={s.quickTip}>
                 <div style={s.quickTipLabel}>TIP</div>
                 {enText && (
-                  <>
-                    <div style={s.quickTipLangLabel}>EN</div>
-                    <div style={s.quickTipText}>{enText}</div>
-                  </>
+                  <div style={s.quickTipText}>{enText}</div>
                 )}
                 {esText && (
-                  <>
-                    <div style={{ ...s.quickTipLangLabel, color: BRAND.gold, marginTop: enText ? '10px' : 0 }}>ES</div>
-                    <div style={s.quickTipTextEs}>{esText}</div>
-                  </>
+                  <div style={{ ...s.quickTipTextEs, fontStyle: 'italic', marginTop: enText ? '8px' : 0 }}>{esText}</div>
                 )}
               </div>
             );
