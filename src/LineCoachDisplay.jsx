@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { canonicalSideName, isCanonicalSide } from '@/lib/side-canonical';
 
 // Normalize a quality tip into { en, es }. Mirrors lib/line-coach.js so
 // the client doesn't pull in server-only deps. Accepts legacy string tips.
@@ -386,29 +387,72 @@ export default function LineCoachDisplay({ storeId }) {
   const staleCount = apiOrderCount - visibleOrders.length;
   const isSlowPeriod = visibleOrders.length === 0;
 
-  // Side Batching: aggregate sides across all active orders
+  // Side Batching: aggregate sides across all active orders.
+  //
+  // Two sources are merged:
+  //   1. order.sides — what the webhook already extracted (parsed from
+  //      Toast modifiers and standalone side line items)
+  //   2. order.items where the item NAME resolves to a known side
+  //      (rare, but covers cases where Toast inlines a side as an
+  //      item rather than a modifier — without this the kitchen
+  //      misses prep volume)
+  //
+  // Critical correctness rules:
+  //   - All names are run through canonicalSideName() so production
+  //     typos like "Charred Brocolli" / "Brussels Sprouts" / "BUFFALO
+  //     CAULIFLOWER" merge into one bucket. Every count must reflect
+  //     reality or cooks lose trust in the alert.
+  //   - We track which (orderId, canonicalName) pairs were already
+  //     credited from the sides array so the items pass cannot
+  //     double-count. The webhook already pushes standalone-side
+  //     items into order.sides, so a naive second pass would add
+  //     them twice.
+  //   - configSides lookup is case-insensitive and uses the canonical
+  //     name so cook_time / batch_size hits even when the configured
+  //     side has a slightly different label than what Toast sent.
   function getBatchedSides() {
-    const sideCounts = {};
+    const sideCounts = {};            // canonicalName → total qty
+    const credited = new Set();       // `${orderId}::${canonicalName}` to prevent double-count
+    const findConfig = (canonicalName) => {
+      if (!canonicalName) return null;
+      const lower = canonicalName.toLowerCase();
+      return configSides.find((s) => (s?.name || '').toLowerCase() === lower) || null;
+    };
+
     for (const order of visibleOrders) {
+      const oid = order.id || order.order_number || '';
       for (const side of order.sides || []) {
-        const name = side.name || side;
-        sideCounts[name] = (sideCounts[name] || 0) + (side.quantity || 1);
+        const rawName = side?.name || (typeof side === 'string' ? side : null);
+        if (!rawName) continue;
+        const canonical = canonicalSideName(rawName) || rawName;
+        const qty = Number.isFinite(side?.quantity) ? side.quantity : 1;
+        if (qty <= 0) continue;
+        sideCounts[canonical] = (sideCounts[canonical] || 0) + qty;
+        credited.add(`${oid}::${canonical}`);
       }
     }
-    // Also count sides that appear as items
+    // Catch sides that were inlined as items rather than pushed to
+    // order.sides. Skip if already credited from the sides array.
     for (const order of visibleOrders) {
+      const oid = order.id || order.order_number || '';
       for (const item of order.items || []) {
-        const sideMatch = configSides.find((s) => s.name === item.name);
-        if (sideMatch) {
-          sideCounts[item.name] = (sideCounts[item.name] || 0) + (item.quantity || 1);
-        }
+        if (!item?.name) continue;
+        if (!isCanonicalSide(item.name)) continue;
+        const canonical = canonicalSideName(item.name);
+        if (!canonical) continue;
+        const key = `${oid}::${canonical}`;
+        if (credited.has(key)) continue;
+        const qty = Number.isFinite(item?.quantity) ? item.quantity : 1;
+        if (qty <= 0) continue;
+        sideCounts[canonical] = (sideCounts[canonical] || 0) + qty;
+        credited.add(key);
       }
     }
     // Sort by cook time (longest first), then by count
     return Object.entries(sideCounts)
       .sort((a, b) => {
-        const aCook = configSides.find((sc) => sc.name === a[0])?.cook_time || 0;
-        const bCook = configSides.find((sc) => sc.name === b[0])?.cook_time || 0;
+        const aCook = findConfig(a[0])?.cook_time || 0;
+        const bCook = findConfig(b[0])?.cook_time || 0;
         if (bCook !== aCook) return bCook - aCook;
         return b[1] - a[1];
       });
@@ -1151,7 +1195,11 @@ export default function LineCoachDisplay({ storeId }) {
               <div style={s.emptyState}>No sides to batch</div>
             )}
             {batchedSides.map(([name, count]) => {
-              const sideConfig = configSides.find((sc) => sc.name === name);
+              // Case-insensitive lookup so the configured side row is
+              // found even if it's labeled slightly differently than
+              // the canonical name we resolved to.
+              const lower = (name || '').toLowerCase();
+              const sideConfig = configSides.find((sc) => (sc?.name || '').toLowerCase() === lower);
               const batchSize = sideConfig?.batch_size || 4;
               const batchesNeeded = Math.ceil(count / batchSize);
               const cookTime = sideConfig?.cook_time || 0;

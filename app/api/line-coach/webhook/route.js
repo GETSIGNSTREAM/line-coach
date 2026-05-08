@@ -4,6 +4,7 @@ import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId, logWebhook } 
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 import { getServiceClient } from '@/lib/supabase';
+import { canonicalSideName } from '@/lib/side-canonical';
 
 function clientIp(request) {
   return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
@@ -112,14 +113,25 @@ function titleCase(str) {
 
 // ── Extract sides from modifiers ────────────────────────
 
-function extractSidesFromModifiers(modifiers) {
+// Modifiers attached to an entree (e.g. "Spanish Rice", "Charred
+// Brocolli"). For each that's a known side, we push it to the sides
+// array with the parent entree's quantity — so a Protein Plate with
+// quantity=3 and modifier "Spanish Rice" yields 3x Spanish Rice for
+// the kitchen, not 1.
+//
+// Side names are normalized to their CANONICAL form (see
+// lib/side-canonical.js) so "Charred Brocolli", "Charred Brocoll", and
+// "Broccoli" all aggregate together in batching.
+function extractSidesFromModifiers(modifiers, entreeQuantity = 1) {
   const sides = [];
   const remaining = [];
+  const qty = Math.max(1, parseInt(entreeQuantity, 10) || 1);
 
   for (const mod of modifiers) {
     const cleaned = mod.replace(/\s*\(LARGE\)/gi, '').replace(/\s*\(SMALL\)/gi, '').trim();
     if (isSideItem(cleaned)) {
-      sides.push({ name: titleCase(cleaned), quantity: 1 });
+      const canonical = canonicalSideName(cleaned) || titleCase(cleaned);
+      sides.push({ name: canonical, quantity: qty });
     } else if (!SKIP_MODIFIERS.test(mod) && !isSauceItem(cleaned)) {
       remaining.push(titleCase(mod));
     }
@@ -316,15 +328,19 @@ export async function POST(request) {
       if (item.voided || item.voidDate) continue;
 
       const rawModifiers = (item.modifiers || []).map((m) => m.displayName || m.name);
+      const itemQty = Math.max(1, parseInt(item.quantity, 10) || 1);
 
       // Standalone side
       if (isSideItem(cleanName)) {
-        sides.push({ name: titleCase(cleanName), quantity: item.quantity || 1 });
+        const canonical = canonicalSideName(cleanName) || titleCase(cleanName);
+        sides.push({ name: canonical, quantity: itemQty });
         continue;
       }
 
-      // Main entree — extract sides from modifiers
-      const extracted = extractSidesFromModifiers(rawModifiers);
+      // Main entree — extract sides from modifiers, multiplying each
+      // by the parent entree's quantity so the kitchen sees the
+      // correct count for batching.
+      const extracted = extractSidesFromModifiers(rawModifiers, itemQty);
       sides.push(...extracted.sides);
 
       mains.push({
