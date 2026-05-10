@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getTicketTimePercentiles } from '@/lib/line-coach';
+import { getTicketTimePercentiles, getConfig, resolveStoreId } from '@/lib/line-coach';
 import { requireAdmin } from '@/lib/auth';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
@@ -24,7 +24,16 @@ export async function GET(request) {
   if (!storeId) return NextResponse.json({ error: 'store required' }, { status: 400 });
   const days = Math.min(Math.max(parseInt(searchParams.get('days') || '7', 10), 1), 90);
 
-  const { data, error } = await getTicketTimePercentiles({ storeId, days });
+  // Pull the cleanup cutoff from brand config so the analytics window
+  // tracks whatever the admin has set as the hard wall (default 12).
+  // Fall back to 12 on a config-load error so the chart still works.
+  let cleanupCutoffMinutes = 12;
+  try {
+    const { data: cfg } = await getConfig(resolveStoreId('default'));
+    cleanupCutoffMinutes = cfg?.hold_times?.max_ticket_minutes ?? 12;
+  } catch { /* fall back to default */ }
+
+  const { data, error } = await getTicketTimePercentiles({ storeId, days, cleanupCutoffMinutes });
   if (error) {
     console.error('Failed to compute ticket-time percentiles:', error);
     return NextResponse.json({ error: 'Failed to compute' }, { status: 500 });

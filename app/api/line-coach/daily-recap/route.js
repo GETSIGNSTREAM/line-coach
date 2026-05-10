@@ -43,13 +43,17 @@ function buildMessage(recap, slaBreachMin) {
     return `🐦 *WILDBIRD — ${name} — ${recap.day}*\n\nNo bumped orders yesterday.\n\n— sent by Line Coach`;
   }
 
+  const cleanupNote = recap.cleanup_bumped > 0
+    ? `\nCleanup-bumped: ${recap.cleanup_bumped} (hit the 12-min wall — not counted in averages above)`
+    : '';
+
   return [
     `🐦 *WILDBIRD — ${name} — yesterday (${recap.day})*`,
     '',
     `Tickets:        ${recap.tickets}`,
     `Avg out-the-door: ${fmtSec(recap.avg_seconds)}   ${avgUnder ? '✅ under' : '⚠️ over'} ${slaBreachMin}-min brand promise`,
     `p90:            ${fmtSec(recap.p90_seconds)}   ${p90Under ? '✅' : '⚠️ tail edging over'}`,
-    `Over-SLA:       ${recap.over_sla} (${overSlaPct}%)${recap.over_sla_pct > 5 ? '   ⚠️ investigate' : ''}`,
+    `Over-SLA:       ${recap.over_sla} (${overSlaPct}%)${recap.over_sla_pct > 5 ? '   ⚠️ investigate' : ''}` + cleanupNote,
     '',
     'Top batches:',
     sides,
@@ -99,10 +103,11 @@ async function handle(request) {
   if (provided !== expected) return unauthorized('bad bearer');
 
   const slackToken = process.env.SLACK_BOT_TOKEN;
-  // Read brand config once to get recap_recipients + sla_breach_minutes.
+  // Read brand config once to get recap_recipients + sla thresholds.
   const { data: cfg } = await getConfig(resolveStoreId('default'));
   const recipients = cfg?.recap_recipients || {};
   const slaBreachMin = cfg?.hold_times?.sla_breach_minutes ?? 10;
+  const cleanupCutoffMinutes = cfg?.hold_times?.max_ticket_minutes ?? 12;
 
   // Manual run via ?dry=1 returns the rendered messages without posting
   // to Slack. Useful for verifying formatting before flipping the cron
@@ -115,7 +120,7 @@ async function handle(request) {
 
   for (const storeId of stores) {
     try {
-      const { data: recap, error } = await buildDailyRecap({ storeId, slaBreachMin });
+      const { data: recap, error } = await buildDailyRecap({ storeId, slaBreachMin, cleanupCutoffMinutes });
       if (error) {
         results.push({ store: storeId, status: 'recap_error', error: error.message });
         continue;
