@@ -452,7 +452,7 @@ function Header({ title, subtitle, onBack, accentColor, language, onLanguageTogg
             minWidth: '60px',
           }}
         >
-          {language === 'en' ? 'EN · es' : 'es · EN'}
+          {language === 'en' ? 'EN · es' : 'ES · en'}
         </button>
       )}
     </div>

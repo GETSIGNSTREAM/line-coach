@@ -2235,7 +2235,7 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle })
               justifyContent: 'center',
             }}
           >
-            {language === 'en' ? 'EN · es' : 'es · EN'}
+            {language === 'en' ? 'EN · es' : 'ES · en'}
           </button>
         )}
         <span style={s.clock}>{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
