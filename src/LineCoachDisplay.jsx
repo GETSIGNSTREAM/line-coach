@@ -104,6 +104,23 @@ export default function LineCoachDisplay({ storeId }) {
   const optimisticallyBumpedRef = useRef(new Set());
   const holdTimersRef = useRef({});  // orderId → { rafId, startedAt }
 
+  // Track order ids that just appeared so we can play the entry
+  // animation once. Cleared after the animation duration so a card
+  // doesn't re-animate on a normal re-render. Refs (not state)
+  // because we don't want a render cycle for the cleanup tick.
+  const freshOrderIdsRef = useRef(new Set());
+  const seenOrderIdsRef = useRef(new Set());
+
+  // Track per-side last-rendered counts so we can flash the new
+  // count when it changes (move 5: side-batch count tick-up).
+  const lastSideCountsRef = useRef(new Map());
+  const flashSideRef = useRef(new Set()); // canonical name → flash this render
+
+  // Hint pill: shows on the first card for ~7s after page load until
+  // the cook bumps once in the session. sessionStorage so a refresh
+  // mid-shift doesn't re-show it; new browser session brings it back.
+  const [showHoldHint, setShowHoldHint] = useState(false);
+
   const HOLD_DURATION_MS = 800;
   const UNDO_WINDOW_MS = 5000;
 
@@ -399,6 +416,80 @@ export default function LineCoachDisplay({ storeId }) {
     }
   }, []);
 
+  // Track which orders are "fresh" (just appeared) so the entry
+  // animation runs exactly once per order. seenOrderIdsRef holds the
+  // last-known set of ids; any id present now but not before is fresh.
+  // Cleared 320ms after the animation completes so a normal re-render
+  // doesn't re-trigger.
+  useEffect(() => {
+    const liveIds = new Set();
+    for (const o of orders) {
+      if (o.id) liveIds.add(o.id);
+    }
+    const justAppeared = [];
+    for (const id of liveIds) {
+      if (!seenOrderIdsRef.current.has(id)) justAppeared.push(id);
+    }
+    if (justAppeared.length > 0) {
+      for (const id of justAppeared) freshOrderIdsRef.current.add(id);
+      const t = setTimeout(() => {
+        for (const id of justAppeared) freshOrderIdsRef.current.delete(id);
+      }, 320);
+      seenOrderIdsRef.current = liveIds;
+      return () => clearTimeout(t);
+    }
+    seenOrderIdsRef.current = liveIds;
+    return () => {};
+  }, [orders]);
+
+  // Hint pill: initialize from sessionStorage. Only show if not seen.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (window.sessionStorage.getItem('lcHintSeen') !== '1') {
+        setShowHoldHint(true);
+      }
+    } catch { /* sessionStorage may be blocked; default off */ }
+  }, []);
+
+  // Side-batch count tick-up: detect every increase in the per-side
+  // total and set a transient flash flag the renderer reads. Runs in
+  // an effect (not during render) so the setTimeout cleanup is safe
+  // and React won't double-invoke under StrictMode. Watching
+  // `orders` is a sufficient trigger because the side counts are
+  // derived from order content.
+  useEffect(() => {
+    // Recompute the side counts from the current orders without
+    // depending on getBatchedSides (avoids a circular state dep).
+    const liveCounts = new Map();
+    for (const o of orders) {
+      for (const side of o.sides || []) {
+        const sn = typeof side === 'string' ? side : side?.name;
+        const sq = typeof side === 'object' ? (side.quantity || 1) : 1;
+        if (!sn) continue;
+        liveCounts.set(sn, (liveCounts.get(sn) || 0) + sq);
+      }
+    }
+    const flashed = [];
+    for (const [name, count] of liveCounts) {
+      const prev = lastSideCountsRef.current.get(name);
+      if (prev !== undefined && count > prev) {
+        flashSideRef.current.add(name);
+        flashed.push(name);
+      }
+      lastSideCountsRef.current.set(name, count);
+    }
+    // Drop entries that no longer appear so we don't leak memory.
+    for (const name of [...lastSideCountsRef.current.keys()]) {
+      if (!liveCounts.has(name)) lastSideCountsRef.current.delete(name);
+    }
+    if (flashed.length === 0) return undefined;
+    const t = setTimeout(() => {
+      for (const name of flashed) flashSideRef.current.delete(name);
+    }, 420);
+    return () => clearTimeout(t);
+  }, [orders]);
+
   // ── Touch-to-bump ────────────────────────────────────
 
   function cancelHold(orderId) {
@@ -412,6 +503,11 @@ export default function LineCoachDisplay({ storeId }) {
     optimisticallyBumpedRef.current.add(orderId);
     setHoldProgress(null);
     delete holdTimersRef.current[orderId];
+    // Hint has done its job — silence it for the rest of the session.
+    if (typeof window !== 'undefined') {
+      try { window.sessionStorage.setItem('lcHintSeen', '1'); } catch { /* ignore */ }
+    }
+    setShowHoldHint(false);
     setBumpedToast({
       orderId,
       orderNum: orderSnapshot?.order_number || '—',
@@ -774,7 +870,14 @@ export default function LineCoachDisplay({ storeId }) {
             0%, 100% { box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.85); }
             50%      { box-shadow: 0 0 0 8px rgba(214, 69, 69, 0); }
           }
-          @keyframes lcFocusFade { from { opacity: 0; } to { opacity: 1; } }
+          /* Focus mode photo crossfade — was opacity-only; now adds a
+             subtle scale-down (1.03 → 1.0) so the dish photo settles
+             into place rather than fading flat. Premium feel for the
+             single-order canvas. */
+          @keyframes lcFocusFade {
+            from { opacity: 0; transform: scale(1.03); }
+            to   { opacity: 1; transform: scale(1);    }
+          }
         `}</style>
         <Header now={now} orderCount={1} />
 
@@ -858,7 +961,7 @@ export default function LineCoachDisplay({ storeId }) {
           gap: '24px',
           padding: '16px',
           minHeight: 'calc(100vh - 200px)',
-          animation: 'lcFocusFade 350ms ease-out',
+          animation: 'lcFocusFade 420ms cubic-bezier(0.2, 0.8, 0.2, 1)',
         }}>
           {/* Left: photo + entree name + sides + modifiers */}
           <div style={{
@@ -1055,6 +1158,34 @@ export default function LineCoachDisplay({ storeId }) {
           0%, 100% { box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.85); }
           50%      { box-shadow: 0 0 0 8px rgba(214, 69, 69, 0); }
         }
+        /* Touch-era polish keyframes. Each is intentionally subtle —
+           a kitchen monitor running 11 hours/day shouldn't strobe. */
+        @keyframes lcOrderEnter {
+          from { opacity: 0; transform: translateY(-12px) scale(0.98); }
+          to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+        /* Red-band SLA pulse: slower (2.4s) and dimmer than the
+           allergy pulse (1.4s, 85% alpha) so they don't compete on
+           a card that's both over-SLA and has an allergy note. */
+        @keyframes lcSlaPulse {
+          0%, 100% { box-shadow: inset 4px 0 0 ${BRAND.red}, 0 0 0 1px ${BRAND.red}55, 0 0 28px ${BRAND.red}40, 0 4px 12px rgba(0,0,0,0.25); }
+          50%      { box-shadow: inset 4px 0 0 ${BRAND.red}, 0 0 0 1px ${BRAND.red}66, 0 0 36px ${BRAND.red}55, 0 4px 12px rgba(0,0,0,0.25); }
+        }
+        /* Hint pill: 1s delay, 600ms fade-in, 5.4s hold, 1s fade-out.
+           "forwards" so it stays hidden after the animation. */
+        @keyframes lcHintFade {
+          0%   { opacity: 0; }
+          10%  { opacity: 1; }
+          80%  { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        /* Side-batch count tick-up — gentle overshoot draws attention
+           to the digit changing without being distracting. */
+        @keyframes lcCountBump {
+          0%   { transform: scale(1);   color: ${BRAND.gold}; }
+          40%  { transform: scale(1.18); color: ${BRAND.white}; }
+          100% { transform: scale(1);   color: ${BRAND.gold}; }
+        }
       `}</style>
       <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} />
       {bumpedToast && (
@@ -1079,19 +1210,23 @@ export default function LineCoachDisplay({ storeId }) {
               //   comfortable (2-3 visible) → bigger photo / text, ~50% taller rows
               //   rush (4+ visible)         → today's compact dense layout
               const isComfortable = density === 'comfortable';
-              const MAX_VISIBLE = isComfortable ? 3 : 8;
+              // Touch-era cap: rush max went 8 → 6 because 22" wall-mount
+              // taps need ≥60px targets (was 48px). Better to scroll past
+              // 6 than to mis-tap the wrong card with greasy hands.
+              const MAX_VISIBLE = isComfortable ? 3 : 6;
               const visibleOrders = orderSequence.slice(0, MAX_VISIBLE);
               const hiddenCount = orderSequence.length - MAX_VISIBLE;
-              // Density-driven sizes (in px / rem). All of these match the
-              // existing rush values when not in comfortable mode so the
-              // current production layout is byte-for-byte unchanged at 4+.
-              const rowPad = isComfortable ? '14px 0' : '6px 0';
-              const sidebarW = isComfortable ? '110px' : '80px';
+              // Density-driven sizes (in px / rem). Rush values were
+              // bumped for touch ergonomics (sidebar 80→96, photo
+              // 48→60, padding 6→10) so every card is a confident tap
+              // target on the 22" wall-mounted touchscreen.
+              const rowPad = isComfortable ? '14px 0' : '10px 0';
+              const sidebarW = isComfortable ? '110px' : '96px';
               const orderNumSize = isComfortable ? '1.4rem' : '1rem';
               const customerSize = isComfortable ? '0.95rem' : '0.7rem';
               const badgeSize = isComfortable ? '0.85rem' : '0.65rem';
               const timerSize = isComfortable ? '1.6rem' : '1.1rem';
-              const photoSize = isComfortable ? '110px' : '48px';
+              const photoSize = isComfortable ? '110px' : '60px';
               const entreeNameSize = isComfortable ? '2.2rem' : '1.5rem';
               // Modifier + sides line are now BIGGER than the entree
               // name in rush mode and matched-or-larger in comfortable.
@@ -1134,20 +1269,60 @@ export default function LineCoachDisplay({ storeId }) {
                       onPointerCancel: () => cancelHold(order.id),
                     } : {};
 
+                    // SLA visual band moves from sidebar's hard
+                    // border-left to a card-level box-shadow stack:
+                    // soft inset rail (color-coded), thin outer ring,
+                    // and outer glow so the band feels like presence
+                    // rather than a stripe. Green steady-state has
+                    // no shadow — only aging orders earn glow.
+                    // Rush priority always renders red regardless of age.
+                    const isAmber = !order.isFutureOrder
+                      && order.priority !== 'rush'
+                      && order.elapsedMinutes >= warningMin
+                      && order.elapsedMinutes < dangerMin;
+                    const isRed = !order.isFutureOrder
+                      && (order.priority === 'rush' || order.elapsedMinutes >= dangerMin);
+                    const cardShadow = isRed
+                      ? `inset 4px 0 0 ${BRAND.red}, 0 0 0 1px ${BRAND.red}55, 0 0 28px ${BRAND.red}40, 0 4px 12px rgba(0,0,0,0.25)`
+                      : isAmber
+                        ? `inset 4px 0 0 ${BRAND.yellow}, 0 0 0 1px ${BRAND.yellow}40, 0 0 18px ${BRAND.yellow}25, 0 4px 12px rgba(0,0,0,0.25)`
+                        : `inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 12px rgba(0,0,0,0.25)`;
                     return (
-                      <div key={oi}
+                      <div key={order.id || oi}
+                        data-fresh={freshOrderIdsRef.current.has(order.id) ? '1' : undefined}
                         {...orderHandlers}
                         style={{
-                          borderTop: oi > 0 ? `2px solid ${BRAND.gold}40` : 'none',
+                          marginTop: oi > 0 ? '8px' : 0,
                           padding: rowPad,
                           position: 'relative',
                           userSelect: 'none',
                           WebkitUserSelect: 'none',
                           touchAction: touchEnabled ? 'none' : 'auto',
                           background: isHolding
-                            ? `linear-gradient(90deg, ${BRAND.green}40 ${holdPct * 100}%, transparent ${holdPct * 100}%)`
-                            : 'transparent',
-                          transition: isHolding ? 'none' : 'background 0.3s',
+                            ? `linear-gradient(90deg, ${BRAND.green}40 ${holdPct * 100}%, ${BRAND.charcoal} ${holdPct * 100}%)`
+                            : BRAND.charcoal,
+                          borderRadius: '10px',
+                          boxShadow: cardShadow,
+                          transform: isHolding ? 'scale(0.985)' : 'scale(1)',
+                          // Lane-change band cross-fade: 600ms on shadow
+                          // so green→amber→red transitions glide rather
+                          // than snap. Hold gesture keeps its instant
+                          // response (no transition while holding).
+                          transition: isHolding
+                            ? 'none'
+                            : 'box-shadow 600ms ease-out, transform 120ms ease-out, background 0.3s',
+                          animation: freshOrderIdsRef.current.has(order.id)
+                            ? 'lcOrderEnter 280ms cubic-bezier(0.2, 0.8, 0.2, 1)'
+                            : undefined,
+                          ...(isRed && order.priority !== 'rush' ? {
+                            // Soft pulse on the red band only — slower
+                            // (2.4s) and dimmer than allergy pulse so
+                            // the two don't compete on the same card.
+                            animationName: 'lcSlaPulse',
+                            animationDuration: '2.4s',
+                            animationIterationCount: 'infinite',
+                            animationTimingFunction: 'ease-in-out',
+                          } : {}),
                         }}>
                       {isHolding && (
                         <div style={{
@@ -1166,6 +1341,33 @@ export default function LineCoachDisplay({ storeId }) {
                           zIndex: 10,
                         }}>
                           Hold to bump · {Math.round(holdPct * 100)}%
+                        </div>
+                      )}
+                      {/* One-time hint pill for the first card of a
+                          fresh session — fades in at 1s, out at 8s,
+                          and never returns once the cook bumps once
+                          (sessionStorage 'lcHintSeen'). Only renders
+                          on the FIRST visible order so we don't
+                          clutter every card. */}
+                      {oi === 0 && touchEnabled && order.id && showHoldHint && (
+                        <div style={{
+                          position: 'absolute',
+                          bottom: '10px',
+                          right: '14px',
+                          background: 'rgba(212, 165, 116, 0.18)',
+                          color: BRAND.gold,
+                          fontFamily: "'Oswald', sans-serif",
+                          fontWeight: 700,
+                          letterSpacing: '1.5px',
+                          textTransform: 'uppercase',
+                          fontSize: '0.85rem',
+                          padding: '6px 12px',
+                          borderRadius: '999px',
+                          pointerEvents: 'none',
+                          animation: 'lcHintFade 8s ease-in-out 1s forwards',
+                          zIndex: 10,
+                        }}>
+                          Hold card to bump
                         </div>
                       )}
                       {allergyNote && (
@@ -1193,11 +1395,14 @@ export default function LineCoachDisplay({ storeId }) {
                       <div style={{
                         display: 'flex',
                       }}>
-                        {/* Left sidebar: check info + timer */}
+                        {/* Left sidebar: check info + timer.
+                            SLA band moved from this sidebar's
+                            border-left to a card-level box-shadow,
+                            so this column is now a clean transparent
+                            zone — the timer color and the card glow
+                            carry the SLA signal together. */}
                         <div style={{
                           width: sidebarW,
-                          background: `${ticketBorderColor}15`,
-                          borderLeft: `5px solid ${ticketBorderColor}`,
                           display: 'flex',
                           flexDirection: 'column',
                           alignItems: 'center',
@@ -1389,6 +1594,11 @@ export default function LineCoachDisplay({ storeId }) {
               const cookTime = sideConfig?.cook_time || 0;
               const imageUrl = getSideImageUrl(name, menuItems, configSides);
 
+              // Flash flag is computed in the side-count effect below
+              // (stable ref read during render is safe; mutations live
+              // outside of render to avoid setTimeout-during-render).
+              const isFlashing = flashSideRef.current.has(name);
+
               // Dynamic sizing based on number of sides — compact for narrow column
               const n = batchedSides.length;
               const imgSize = n <= 4 ? '7vh' : n <= 8 ? '5.5vh' : '4.5vh';
@@ -1448,15 +1658,23 @@ export default function LineCoachDisplay({ storeId }) {
                       </div>
                     )}
                   </div>
-                  <div style={{
-                    fontSize: `clamp(2rem, ${countSize}, 6rem)`,
-                    fontWeight: 700,
-                    color: BRAND.gold,
-                    fontFamily: "'Oswald', sans-serif",
-                    lineHeight: 1,
-                    flexShrink: 0,
-                    textAlign: 'right',
-                  }}>{count}</div>
+                  <div
+                    key={isFlashing ? `${name}-${count}` : name}
+                    style={{
+                      fontSize: `clamp(2rem, ${countSize}, 6rem)`,
+                      fontWeight: 700,
+                      color: BRAND.gold,
+                      fontFamily: "'Oswald', sans-serif",
+                      lineHeight: 1,
+                      flexShrink: 0,
+                      textAlign: 'right',
+                      // Inline-block so transform: scale() doesn't blow
+                      // out the parent flex layout when the digit pops.
+                      display: 'inline-block',
+                      animation: isFlashing
+                        ? 'lcCountBump 380ms cubic-bezier(0.34, 1.56, 0.64, 1)'
+                        : undefined,
+                    }}>{count}</div>
                 </div>
               );
             })}
