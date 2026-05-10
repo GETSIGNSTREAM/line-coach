@@ -93,6 +93,31 @@ export default function LineCoachDisplay({ storeId }) {
   // Interval handle for the repeating danger tone.
   const dangerIntervalRef = useRef(null);
 
+  // Touch-to-bump state. holdProgress is the in-flight hold (order id +
+  // 0..1 fill); bumpedToast tracks the last bumped order so the undo
+  // pill can restore it within the undo window.
+  const [holdProgress, setHoldProgress] = useState(null);  // { orderId, pct }
+  const [bumpedToast, setBumpedToast] = useState(null);    // { orderId, orderNum, expiresAt }
+  // Persistent ref of bumped ids that should be hidden optimistically
+  // until the realtime channel confirms. Re-checked in the visibleOrders
+  // filter below so the card disappears the instant the hold completes.
+  const optimisticallyBumpedRef = useRef(new Set());
+  const holdTimersRef = useRef({});  // orderId → { rafId, startedAt }
+
+  const HOLD_DURATION_MS = 800;
+  const UNDO_WINDOW_MS = 5000;
+
+  // Detect touch capability + URL override. ?touch=1 forces on, ?touch=0
+  // forces off, anything else auto-detects.
+  const touchEnabled = (() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    const override = params.get('touch');
+    if (override === '1') return true;
+    if (override === '0') return false;
+    return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  })();
+
   useEffect(() => {
     if (supabaseUrl && supabaseAnonKey) {
       supabaseRef.current = createClient(supabaseUrl, supabaseAnonKey);
@@ -369,6 +394,78 @@ export default function LineCoachDisplay({ storeId }) {
     }
   }, []);
 
+  // ── Touch-to-bump ────────────────────────────────────
+
+  function cancelHold(orderId) {
+    const t = holdTimersRef.current[orderId];
+    if (t?.rafId) cancelAnimationFrame(t.rafId);
+    delete holdTimersRef.current[orderId];
+    setHoldProgress((prev) => (prev?.orderId === orderId ? null : prev));
+  }
+
+  async function commitBump(orderId, orderSnapshot) {
+    optimisticallyBumpedRef.current.add(orderId);
+    setHoldProgress(null);
+    delete holdTimersRef.current[orderId];
+    setBumpedToast({
+      orderId,
+      orderNum: orderSnapshot?.order_number || '—',
+      expiresAt: Date.now() + UNDO_WINDOW_MS,
+    });
+    try {
+      const res = await fetch('/api/line-coach/bump', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId }),
+      });
+      if (!res.ok) throw new Error(`bump ${res.status}`);
+    } catch {
+      // Restore: realtime won't help us here since the row never moved
+      optimisticallyBumpedRef.current.delete(orderId);
+      setBumpedToast(null);
+    }
+  }
+
+  function startHold(orderId, orderSnapshot) {
+    if (!touchEnabled) return;
+    if (optimisticallyBumpedRef.current.has(orderId)) return;
+    if (holdTimersRef.current[orderId]) return;
+    const startedAt = performance.now();
+    const tick = () => {
+      const elapsed = performance.now() - startedAt;
+      const pct = Math.min(1, elapsed / HOLD_DURATION_MS);
+      setHoldProgress({ orderId, pct });
+      if (pct >= 1) {
+        commitBump(orderId, orderSnapshot);
+        return;
+      }
+      holdTimersRef.current[orderId].rafId = requestAnimationFrame(tick);
+    };
+    holdTimersRef.current[orderId] = { startedAt, rafId: requestAnimationFrame(tick) };
+  }
+
+  async function handleUndo() {
+    const t = bumpedToast;
+    if (!t) return;
+    setBumpedToast(null);
+    optimisticallyBumpedRef.current.delete(t.orderId);
+    try {
+      await fetch('/api/line-coach/unbump', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: t.orderId }),
+      });
+    } catch { /* realtime will reconcile on next fetch */ }
+  }
+
+  // Auto-clear the undo toast after the window expires.
+  useEffect(() => {
+    if (!bumpedToast) return undefined;
+    const ms = Math.max(0, bumpedToast.expiresAt - Date.now());
+    const timer = setTimeout(() => setBumpedToast(null), ms);
+    return () => clearTimeout(timer);
+  }, [bumpedToast]);
+
   // ── Data Processing ─────────────────────────────────
 
   const menuItems = config?.menu_items || [];
@@ -388,6 +485,10 @@ export default function LineCoachDisplay({ storeId }) {
   const apiOrderCount = orders.length;
   // eslint-disable-next-line no-redeclare, no-shadow-restricted-names
   const visibleOrders = orders.filter((o) => {
+    // Hide optimistically-bumped orders so the card disappears the
+    // instant the touch-hold completes, even before the realtime
+    // postgres_changes event lands.
+    if (o.id && optimisticallyBumpedRef.current.has(o.id)) return false;
     const t = new Date(o.toast_created_at || o.fire_at || o.created_at).getTime();
     if (!t || Number.isNaN(t)) return true;
     return (now.getTime() - t) / 60_000 < maxTicketMin;
@@ -951,6 +1052,9 @@ export default function LineCoachDisplay({ storeId }) {
         }
       `}</style>
       <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} />
+      {bumpedToast && (
+        <UndoToast orderNum={bumpedToast.orderNum} onUndo={handleUndo} />
+      )}
 
       <div style={s.mainGrid}>
         {/* Left Column: Fire Order — grouped by order */}
@@ -1012,11 +1116,53 @@ export default function LineCoachDisplay({ storeId }) {
                     const allergyNote = isAllergyNote(order.notes) ? order.notes : null;
                     const inlineNote = allergyNote ? null : order.notes;
 
+                    const isHolding = holdProgress?.orderId === order.id;
+                    const holdPct = isHolding ? holdProgress.pct : 0;
+                    const orderHandlers = touchEnabled && order.id ? {
+                      onPointerDown: (e) => {
+                        // Ignore right-clicks / multi-touch beyond first finger
+                        if (e.button && e.button !== 0) return;
+                        startHold(order.id, order);
+                      },
+                      onPointerUp: () => cancelHold(order.id),
+                      onPointerLeave: () => cancelHold(order.id),
+                      onPointerCancel: () => cancelHold(order.id),
+                    } : {};
+
                     return (
-                      <div key={oi} style={{
-                        borderTop: oi > 0 ? `2px solid ${BRAND.gold}40` : 'none',
-                        padding: rowPad,
-                      }}>
+                      <div key={oi}
+                        {...orderHandlers}
+                        style={{
+                          borderTop: oi > 0 ? `2px solid ${BRAND.gold}40` : 'none',
+                          padding: rowPad,
+                          position: 'relative',
+                          userSelect: 'none',
+                          WebkitUserSelect: 'none',
+                          touchAction: touchEnabled ? 'none' : 'auto',
+                          background: isHolding
+                            ? `linear-gradient(90deg, ${BRAND.green}40 ${holdPct * 100}%, transparent ${holdPct * 100}%)`
+                            : 'transparent',
+                          transition: isHolding ? 'none' : 'background 0.3s',
+                        }}>
+                      {isHolding && (
+                        <div style={{
+                          position: 'absolute',
+                          top: '8px',
+                          right: '12px',
+                          background: BRAND.green,
+                          color: BRAND.charcoalDark,
+                          fontFamily: "'Oswald', sans-serif",
+                          fontWeight: 700,
+                          letterSpacing: '1.5px',
+                          textTransform: 'uppercase',
+                          fontSize: '0.85rem',
+                          padding: '4px 12px',
+                          borderRadius: '999px',
+                          zIndex: 10,
+                        }}>
+                          Hold to bump · {Math.round(holdPct * 100)}%
+                        </div>
+                      )}
                       {allergyNote && (
                         <div style={{
                           background: BRAND.red,
@@ -1335,6 +1481,74 @@ export default function LineCoachDisplay({ storeId }) {
 }
 
 // ── Header Component ────────────────────────────────────
+
+function UndoToast({ orderNum, onUndo }) {
+  return (
+    <div style={{
+      position: 'fixed',
+      bottom: '20px',
+      right: '20px',
+      zIndex: 1000,
+      background: BRAND.charcoalDark,
+      border: `2px solid ${BRAND.gold}`,
+      borderRadius: '12px',
+      padding: '12px 16px',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '14px',
+      minWidth: '260px',
+      animation: 'lcUndoIn 0.2s ease-out',
+    }}>
+      <style>{`
+        @keyframes lcUndoIn {
+          from { opacity: 0; transform: translateY(20px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+      <div style={{ flex: 1 }}>
+        <div style={{
+          color: BRAND.green,
+          fontFamily: "'Oswald', sans-serif",
+          letterSpacing: '1.5px',
+          textTransform: 'uppercase',
+          fontSize: '0.7rem',
+          fontWeight: 700,
+        }}>
+          Bumped
+        </div>
+        <div style={{
+          color: BRAND.bone,
+          fontFamily: "'Oswald', sans-serif",
+          fontSize: '1rem',
+          fontWeight: 600,
+        }}>
+          Order #{orderNum}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onUndo}
+        style={{
+          background: BRAND.gold,
+          color: BRAND.charcoal,
+          border: 'none',
+          padding: '8px 16px',
+          borderRadius: '999px',
+          cursor: 'pointer',
+          fontFamily: "'Oswald', sans-serif",
+          fontWeight: 700,
+          letterSpacing: '1.5px',
+          textTransform: 'uppercase',
+          fontSize: '0.85rem',
+          touchAction: 'manipulation',
+        }}
+      >
+        Undo
+      </button>
+    </div>
+  );
+}
 
 function Header({ now, orderCount, staleCount = 0 }) {
   return (
