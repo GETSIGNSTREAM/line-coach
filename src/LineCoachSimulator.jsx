@@ -90,8 +90,21 @@ export default function LineCoachSimulator({ storeId }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
+          {/* Read-only — opens the sandbox in plain display mode for
+              checking visual regressions without bump interactions. */}
           <a href={`/?store=${sandboxStoreId}`} target="_blank" rel="noopener" style={s.linkBtn}>
             Open Sandbox Display
+          </a>
+          {/* Touch-enabled — same display + 800ms hold-to-bump on every
+              card. Use this from a desktop browser to test the touch
+              gesture with a mouse without needing actual hardware. */}
+          <a
+            href={`/?store=${sandboxStoreId}&touch=1`}
+            target="_blank"
+            rel="noopener"
+            style={{ ...s.linkBtn, background: BRAND.gold, color: BRAND.charcoal }}
+          >
+            Touch Test (mouse-friendly)
           </a>
           <button style={s.clearBtn} onClick={clearOrders} disabled={loading === 'clear'}>
             {loading === 'clear' ? 'Clearing...' : 'Clear All Sim Orders'}
@@ -100,9 +113,9 @@ export default function LineCoachSimulator({ storeId }) {
       </div>
 
       <div style={s.instructions}>
-        1. Open the <a href={`/?store=${sandboxStoreId}`} target="_blank" rel="noopener" style={s.link}>sandbox display</a> in another window.
+        1. Open the <a href={`/?store=${sandboxStoreId}&touch=1`} target="_blank" rel="noopener" style={s.link}>sandbox display in touch-test mode</a> in another window — every card responds to mouse hold-to-bump (800 ms).
         2. Run a scenario below.
-        3. Watch the coaching panels update in real-time.
+        3. Watch the coaching panels update in real-time and try bumping cards by holding them.
         4. Tune the sandbox menu, sides, and tips in the <a href={`/?admin&store=${sandboxStoreId}`} target="_blank" rel="noopener" style={s.link}>sandbox admin panel</a>.
       </div>
 
