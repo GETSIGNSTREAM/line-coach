@@ -490,13 +490,44 @@ export default function LineCoachDisplay({ storeId }) {
     return () => clearTimeout(t);
   }, [orders]);
 
-  // ── Touch-to-bump ────────────────────────────────────
+  // ── Touch-to-bump + tap-to-expand ────────────────────
+  //
+  // Gesture state machine (touch mode only):
+  //   pointerdown                  → start rAF hold timer (existing)
+  //   pointerup, elapsed < 200ms   → fire openDetailSheet, no bump
+  //   pointerup, elapsed 200-800ms → cancelHold, no action (cooks who
+  //                                  release mid-press are clearly
+  //                                  signaling "not committed")
+  //   pointerup, elapsed >= 800ms  → unreachable; commitBump already
+  //                                  fired in the rAF tick
+  //   pointerleave / pointercancel → cancelHold, no action (slide-off
+  //                                  should NOT fire a tap; user
+  //                                  changed their mind)
+  //
+  // 200ms tap threshold — short enough that intentional taps feel
+  // snappy, long enough that drag-from-card-edge doesn't false-fire.
+  const TAP_MAX_MS = 200;
+  // Detail sheet state. null when closed; the rendered order object
+  // (from getOrderSequence, so it has the carried `id`) when open.
+  const [detailOrder, setDetailOrder] = useState(null);
 
-  function cancelHold(orderId) {
+  function cancelHold(orderId, opts = {}) {
     const t = holdTimersRef.current[orderId];
     if (t?.rafId) cancelAnimationFrame(t.rafId);
+    // Capture elapsed BEFORE we clear the timer ref so the tap
+    // detection below sees the same moment-in-time the hold started.
+    const startedAt = t?.startedAt ?? null;
     delete holdTimersRef.current[orderId];
     setHoldProgress((prev) => (prev?.orderId === orderId ? null : prev));
+
+    if (opts.fromPointerUp && opts.order && startedAt != null) {
+      const elapsed = performance.now() - startedAt;
+      if (elapsed < TAP_MAX_MS) {
+        // Open the detail sheet for a short tap. Bump didn't fire
+        // (we'd have hit pct >= 1 in the rAF tick first).
+        setDetailOrder(opts.order);
+      }
+    }
   }
 
   async function commitBump(orderId, orderSnapshot) {
@@ -1191,10 +1222,31 @@ export default function LineCoachDisplay({ storeId }) {
           40%  { transform: scale(1.18); color: ${BRAND.white}; }
           100% { transform: scale(1);   color: ${BRAND.gold}; }
         }
+        /* Detail sheet entry — slide up + fade. Matches the tempo of
+           lcOrderEnter (280ms) so the kitchen's animation language
+           feels coherent. */
+        @keyframes lcSheetIn {
+          from { opacity: 0; transform: translateY(40px) scale(0.97); }
+          to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+        @keyframes lcScrimIn {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
       `}</style>
       <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} />
       {bumpedToast && (
         <UndoToast orderNum={bumpedToast.orderNum} onUndo={handleUndo} />
+      )}
+      {detailOrder && (
+        <OrderDetailSheet
+          order={detailOrder}
+          menuItems={menuItems}
+          configSides={configSides}
+          warningMin={warningMin}
+          dangerMin={dangerMin}
+          onClose={() => setDetailOrder(null)}
+        />
       )}
 
       <div style={s.mainGrid}>
@@ -1276,7 +1328,12 @@ export default function LineCoachDisplay({ storeId }) {
                         if (e.button && e.button !== 0) return;
                         startHold(order.id, order);
                       },
-                      onPointerUp: () => cancelHold(order.id),
+                      // Pointerup is the only path that can fire a tap
+                      // (open detail sheet). Slide-off + cancel paths
+                      // intentionally don't trigger so a cook who
+                      // changes their mind mid-press isn't surprised
+                      // by a sheet popping up.
+                      onPointerUp: () => cancelHold(order.id, { fromPointerUp: true, order }),
                       onPointerLeave: () => cancelHold(order.id),
                       onPointerCancel: () => cancelHold(order.id),
                     } : {};
@@ -1781,6 +1838,290 @@ function UndoToast({ orderNum, onUndo }) {
       >
         Undo
       </button>
+    </div>
+  );
+}
+
+// Tap-to-expand detail sheet. Opens on a quick tap (release < 200ms)
+// from the gesture state machine in cancelHold. Holds longer go to
+// hold-to-bump as before. Auto-dismisses after 30s of no interaction
+// because the wall display is unattended much of the time and a
+// stuck sheet would defeat the brand-promise visibility.
+function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin, onClose }) {
+  // Auto-dismiss timer. Reset on any interaction inside the sheet
+  // (a manager tapping through items shouldn't trip the timeout).
+  useEffect(() => {
+    const t = setTimeout(onClose, 30_000);
+    return () => clearTimeout(t);
+  }, [onClose]);
+
+  // Esc closes for keyboard / desktop testing.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const elapsedMin = order.elapsedMinutes ?? 0;
+  const sevColor = elapsedMin >= dangerMin
+    ? BRAND.red
+    : elapsedMin >= warningMin
+      ? BRAND.yellow
+      : BRAND.green;
+  const allergyNote = isAllergyNote(order.notes) ? order.notes : null;
+  const inlineNote = allergyNote ? null : order.notes;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.85)',
+        zIndex: 2000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px',
+        animation: 'lcScrimIn 180ms ease-out',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: BRAND.charcoal,
+          borderRadius: '14px',
+          maxWidth: '900px',
+          width: '100%',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+          padding: '28px 32px',
+          boxShadow: `0 24px 48px rgba(0,0,0,0.45), inset 4px 0 0 ${sevColor}`,
+          animation: 'lcSheetIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+          color: BRAND.bone,
+          fontFamily: "'Open Sans', sans-serif",
+        }}
+      >
+        {/* Header strip */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '20px', marginBottom: '20px' }}>
+          <div>
+            <div style={{
+              fontFamily: "'Oswald', sans-serif",
+              fontSize: 'clamp(2rem, 3.5vw, 3.5rem)',
+              fontWeight: 800,
+              letterSpacing: '2px',
+              color: BRAND.bone,
+              lineHeight: 1,
+            }}>
+              #{order.orderNum}
+            </div>
+            {order.customerName && (
+              <div style={{ fontSize: '1.4rem', color: BRAND.cream, marginTop: '6px' }}>
+                {order.customerName}
+              </div>
+            )}
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{
+              fontFamily: "'Oswald', sans-serif",
+              fontSize: 'clamp(1.6rem, 2.5vw, 2.5rem)',
+              fontWeight: 700,
+              color: sevColor,
+              fontVariantNumeric: 'tabular-nums',
+              lineHeight: 1,
+            }}>
+              {order.elapsedDisplay}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px', flexWrap: 'wrap' }}>
+              {order.priority === 'rush' && (
+                <span style={{ background: BRAND.red, color: BRAND.white, fontFamily: "'Oswald', sans-serif", fontWeight: 700, letterSpacing: '2px', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem' }}>ASAP</span>
+              )}
+              {order.diningOption && (
+                <span style={{ background: BRAND.charcoalLight, color: BRAND.cream, fontFamily: "'Oswald', sans-serif", fontWeight: 700, letterSpacing: '2px', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem' }}>
+                  {String(order.diningOption).toUpperCase()}
+                </span>
+              )}
+              {order.isFutureOrder && order.fireAt && (
+                <span style={{ background: BRAND.blue, color: BRAND.charcoal, fontFamily: "'Oswald', sans-serif", fontWeight: 700, letterSpacing: '2px', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem' }}>
+                  {order.fireAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: BRAND.cream,
+              fontSize: '2rem',
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              cursor: 'pointer',
+              padding: '0 8px',
+              lineHeight: 1,
+              minWidth: '48px',
+              minHeight: '48px',
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        {allergyNote && (
+          <div style={{
+            background: BRAND.red,
+            color: BRAND.white,
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 700,
+            letterSpacing: '2px',
+            textTransform: 'uppercase',
+            fontSize: '1.4rem',
+            padding: '12px 18px',
+            borderRadius: '6px',
+            marginBottom: '20px',
+            display: 'flex',
+            gap: '12px',
+            alignItems: 'center',
+          }}>
+            <span style={{ fontSize: '1.6rem' }}>⚠</span>
+            <span style={{ fontWeight: 800 }}>ALLERGY</span>
+            <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 600 }}>
+              {trimAllergyPrefix(allergyNote)}
+            </span>
+          </div>
+        )}
+
+        {/* Items list */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '20px' }}>
+          {(order.items || []).map((item, ii) => {
+            const menuMatch = menuItems.find((m) => m.name === item.name);
+            const coachTip = menuMatch?.coach_tip
+              ? normalizeTip(menuMatch.coach_tip)
+              : null;
+            return (
+              <div key={ii} style={{
+                display: 'flex',
+                gap: '16px',
+                background: BRAND.charcoalDark,
+                borderRadius: '10px',
+                padding: '14px 16px',
+              }}>
+                <img
+                  src={getSideImageUrl(item.name, menuItems, configSides)}
+                  alt={item.name}
+                  style={{
+                    width: '88px',
+                    height: '88px',
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                    flexShrink: 0,
+                  }}
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: "'Oswald', sans-serif",
+                    fontWeight: 700,
+                    fontSize: '1.6rem',
+                    textTransform: 'uppercase',
+                    color: BRAND.bone,
+                    lineHeight: 1.1,
+                  }}>
+                    {item.quantity > 1 && <span style={{ color: BRAND.gold, marginRight: '8px' }}>{item.quantity}x</span>}
+                    {item.name}
+                  </div>
+                  {item.modifiers?.length > 0 && (
+                    <div style={{
+                      fontSize: '1.1rem',
+                      color: BRAND.white,
+                      fontWeight: 600,
+                      marginTop: '6px',
+                      lineHeight: 1.3,
+                    }}>
+                      {item.modifiers.join(' · ')}
+                    </div>
+                  )}
+                  {coachTip && (coachTip.en || coachTip.es) && (
+                    <div style={{ marginTop: '10px', borderLeft: `3px solid ${BRAND.gold}`, paddingLeft: '12px' }}>
+                      {coachTip.en && (
+                        <div style={{ fontFamily: "'Playfair Display', Georgia, serif", color: BRAND.cream, fontSize: '1rem', lineHeight: 1.4 }}>
+                          {coachTip.en}
+                        </div>
+                      )}
+                      {coachTip.es && (
+                        <div style={{ fontFamily: "'Playfair Display', Georgia, serif", color: `${BRAND.cream}cc`, fontSize: '0.95rem', fontStyle: 'italic', lineHeight: 1.4, marginTop: '4px' }}>
+                          {coachTip.es}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Sides */}
+        {(order.sides || []).length > 0 && (
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{
+              fontFamily: "'Oswald', sans-serif",
+              fontSize: '0.85rem',
+              fontWeight: 700,
+              letterSpacing: '2px',
+              textTransform: 'uppercase',
+              color: BRAND.gold,
+              marginBottom: '10px',
+            }}>
+              Sides
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {order.sides.map((side, si) => {
+                const sn = typeof side === 'string' ? side : side?.name;
+                const sq = typeof side === 'object' ? (side.quantity || 1) : 1;
+                return (
+                  <div key={si} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.1rem', color: BRAND.cream, padding: '6px 0', borderBottom: `1px solid ${BRAND.charcoalLight}` }}>
+                    <span>{sn}</span>
+                    <span style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", fontWeight: 700 }}>× {sq}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {inlineNote && (
+          <div style={{
+            background: `${BRAND.gold}15`,
+            borderLeft: `3px solid ${BRAND.gold}`,
+            padding: '12px 16px',
+            borderRadius: '4px',
+            color: BRAND.bone,
+            fontSize: '1.05rem',
+            marginBottom: '12px',
+          }}>
+            <span style={{ color: BRAND.gold, marginRight: '8px' }}>⚠</span>
+            {inlineNote}
+          </div>
+        )}
+
+        <div style={{
+          marginTop: '20px',
+          paddingTop: '16px',
+          borderTop: `1px solid ${BRAND.charcoalLight}`,
+          fontSize: '0.8rem',
+          color: `${BRAND.cream}80`,
+          fontFamily: "'Oswald', sans-serif",
+          letterSpacing: '1px',
+          textAlign: 'center',
+          textTransform: 'uppercase',
+        }}>
+          Tap outside to close · Hold a card to bump
+        </div>
+      </div>
     </div>
   );
 }
