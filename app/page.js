@@ -6,12 +6,14 @@ import LineCoachDisplay from '@/src/LineCoachDisplay';
 import LineCoachAdmin from '@/src/LineCoachAdmin';
 import LineCoachSimulator from '@/src/LineCoachSimulator';
 import LineCoachHub from '@/src/LineCoachHub';
+import LineCoachPhone from '@/src/LineCoachPhone';
 
 function LineCoachRouter() {
   const searchParams = useSearchParams();
   const isAdmin = searchParams.has('admin');
   const isSimulator = searchParams.has('simulator');
   const isHub = searchParams.has('hub');
+  const isPhone = searchParams.has('phone');
   // For Display + Simulator the kitchen monitor is always pinned to a
   // specific store, so the legacy 'hollywood' default is fine. For
   // Admin the tool is brand-wide — pass the URL value if provided
@@ -19,6 +21,13 @@ function LineCoachRouter() {
   // the admin can show its store-picker for per-store data instead.
   const storeParam = searchParams.get('store');
   const storeOrDefault = storeParam || 'hollywood';
+
+  if (isPhone) {
+    // Phone companion: token comes from ?t=<jwt>. The component
+    // gracefully handles missing/invalid tokens with a friendly
+    // "ask your admin for a fresh link" message.
+    return <LineCoachPhone token={searchParams.get('t')} />;
+  }
 
   if (isHub) {
     return <LineCoachHub />;

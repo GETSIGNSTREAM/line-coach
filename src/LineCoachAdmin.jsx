@@ -501,6 +501,10 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
+  // Phone share-link generator (Service Hours tab). Holds the
+  // success/error/clipboard message that appears after pressing
+  // "Generate Phone Link"; auto-clears via setTimeout in the handler.
+  const [phoneLinkMsg, setPhoneLinkMsg] = useState('');
 
   async function handleLogin(e) {
     e.preventDefault();
@@ -1096,6 +1100,43 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     const updateRecipient = (slug, value) => {
       updateConfig('recap_recipients', { ...recipients, [slug]: value });
     };
+
+    // Phone share link generator. Mints a JWT (180-day expiry) via
+    // the admin-only phone-token endpoint and copies the URL to the
+    // clipboard. Scope is brand-wide for v1; per-manager scoping is
+    // a future toggle if needed.
+    async function generatePhoneLink() {
+      try {
+        setPhoneLinkMsg('Generating…');
+        const res = await fetch('/api/line-coach/phone-token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ scope: 'all', expiresIn: '180d' }),
+        });
+        if (!res.ok) {
+          setPhoneLinkMsg(`Error (${res.status})`);
+          setTimeout(() => setPhoneLinkMsg(''), 3000);
+          return;
+        }
+        const json = await res.json();
+        try {
+          await navigator.clipboard.writeText(json.url);
+          setPhoneLinkMsg('Copied to clipboard ✓');
+        } catch {
+          // Some browsers gate clipboard on user gesture / context;
+          // fall back to surfacing the URL so admin can long-press copy.
+          setPhoneLinkMsg(json.url);
+        }
+        setTimeout(() => setPhoneLinkMsg(''), 8000);
+      } catch (err) {
+        setPhoneLinkMsg(`Error: ${err.message}`);
+        setTimeout(() => setPhoneLinkMsg(''), 3000);
+      }
+    }
+
     return (
       <div style={styles.panel}>
         <BrandWideBanner />
@@ -1103,6 +1144,39 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           Open/close hours auto-pause webhook ingest outside <strong>[open, close + 15 min]</strong> so late-night Toast retries don&apos;t create phantoms.
           Recipient is the Slack user ID (e.g. <code>U0ABC123</code>) who gets the daily recap DM at 5am PT.
         </p>
+        <div style={{
+          background: `${BRAND.gold}10`,
+          borderLeft: `3px solid ${BRAND.gold}`,
+          borderRadius: '4px',
+          padding: '12px 16px',
+          marginBottom: '16px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ flex: 1, minWidth: '240px' }}>
+            <div style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', fontSize: '0.85rem', color: BRAND.gold, marginBottom: '4px' }}>
+              Phone Share Link
+            </div>
+            <div style={{ fontSize: '0.85rem', color: BRAND.cream }}>
+              Generate a long-lived (180-day) link a manager can bookmark on their phone for live brand stats. Replaces the 5am Slack recap once adopted.
+            </div>
+          </div>
+          <button style={styles.btnSecondary} onClick={generatePhoneLink}>
+            Generate Phone Link
+          </button>
+          {phoneLinkMsg && (
+            <div style={{
+              flex: '1 1 100%',
+              fontSize: '0.85rem',
+              color: phoneLinkMsg.startsWith('Error') ? BRAND.red : BRAND.green,
+              wordBreak: 'break-all',
+            }}>
+              {phoneLinkMsg}
+            </div>
+          )}
+        </div>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: BRAND.charcoalDark }}>
