@@ -1011,14 +1011,26 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   }
 
   function renderHoldTimesTab() {
-    // Merge with defaults so newly-introduced keys (e.g. max_ticket_minutes)
-    // appear in the UI even if the stored config predates them.
-    const ht = { fire_now: 5, staging: 15, on_deck: 30, max_ticket_minutes: 60, ...(config.hold_times || {}) };
+    // Merge with defaults so newly-introduced keys appear in the UI even
+    // if the stored config predates them. Defaults match lib/line-coach.js
+    // (anchored on the 10-min brand promise: amber at 8, red at 10,
+    // hard cleanup at 12).
+    const ht = {
+      fire_now: 5,
+      staging: 15,
+      on_deck: 30,
+      max_ticket_minutes: 12,
+      sla_target_minutes: 8,
+      sla_breach_minutes: 10,
+      ...(config.hold_times || {}),
+    };
     const HELP = {
       fire_now: 'minutes before fire time — moves to FIRE NOW lane',
       staging: 'minutes before fire time — moves to STAGING lane',
       on_deck: 'minutes before fire time — moves to ON DECK lane',
-      max_ticket_minutes: 'orders older than this disappear from the display (still kept in DB for analytics)',
+      sla_target_minutes: 'internal target — orders amber after this many minutes',
+      sla_breach_minutes: 'brand promise — orders red and chime after this many minutes',
+      max_ticket_minutes: 'hard cleanup — orders this old are auto-bumped from DB so batch math stays clean',
     };
     return (
       <div style={styles.panel}>

@@ -266,9 +266,27 @@ export async function POST(request) {
       c.completedDate || c.voidDate
     );
 
-    if (isVoided || isDeleted || isCompleted || allChecksKitchenDone) {
+    // closedDate (paid/settled) is a payment signal, not a kitchen-done
+    // signal — but Toast almost never sends completedDate/voidDate
+    // through the webhook for in-house bumps, so without this fallback
+    // ~99% of orders never get auto-bumped and Line Coach accumulates
+    // phantoms. The 5-min cushion preserves the original concern about
+    // prepaid orders (paid != cooked) while still recovering the auto-
+    // bump signal Toast does reliably send.
+    const CLOSED_DATE_GRACE_MS = 5 * 60_000;
+    const checkClosedAges = checks
+      .map((c) => (c.closedDate ? Date.now() - new Date(c.closedDate).getTime() : null))
+      .filter((v) => v !== null);
+    const allChecksClosedPastGrace = checks.length > 0
+      && checkClosedAges.length === checks.length
+      && checkClosedAges.every((age) => age > CLOSED_DATE_GRACE_MS);
+
+    if (isVoided || isDeleted || isCompleted || allChecksKitchenDone || allChecksClosedPastGrace) {
       await bumpOrderByToastId(toastOrderGuid);
-      logWebhook({ store_id: storeId, status: 'ok', http_status: 200, event_type: 'bump', toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start });
+      const eventType = allChecksClosedPastGrace && !isVoided && !isDeleted && !isCompleted && !allChecksKitchenDone
+        ? 'bump_closed_grace'
+        : 'bump';
+      logWebhook({ store_id: storeId, status: 'ok', http_status: 200, event_type: eventType, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start });
       return NextResponse.json({ status: 'bumped' });
     }
 

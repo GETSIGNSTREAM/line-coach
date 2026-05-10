@@ -489,9 +489,17 @@ export default function LineCoachDisplay({ storeId }) {
       });
   }
 
-  // Timer thresholds from config
-  const warningMin = config?.settings?.ticket_warning_minutes || 5;
-  const dangerMin = config?.settings?.ticket_danger_minutes || 8;
+  // Timer thresholds — prefer brand-wide hold_times (the 8-min coach
+  // band and 10-min brand-promise breach), fall back to legacy per-store
+  // settings so existing customizations keep working until they're
+  // migrated. Reading from hold_times keeps the display in lockstep
+  // with the cleanup cron's 12-min cutoff (max_ticket_minutes).
+  const warningMin = config?.hold_times?.sla_target_minutes
+    ?? config?.settings?.ticket_warning_minutes
+    ?? 8;
+  const dangerMin = config?.hold_times?.sla_breach_minutes
+    ?? config?.settings?.ticket_danger_minutes
+    ?? 10;
 
   function getTicketColor(elapsedMinutes) {
     if (elapsedMinutes >= dangerMin) return BRAND.red;
