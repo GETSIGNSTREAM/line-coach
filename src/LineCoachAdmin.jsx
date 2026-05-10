@@ -487,6 +487,11 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   const [analytics, setAnalytics] = useState(null);
   const [analyticsHours, setAnalyticsHours] = useState(24);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  // Daily p50/p90/p99 chart (B2.1) is independent of the bump-time
+  // window above — it always shows trailing 7 days so the SLA
+  // reference bands at 8/10/12 min stay readable.
+  const [ticketTimes, setTicketTimes] = useState(null);
+  const [ticketTimesLoading, setTicketTimesLoading] = useState(false);
   const [maintStats, setMaintStats] = useState(null);
   const [maintMsg, setMaintMsg] = useState('');
   const [maintBusy, setMaintBusy] = useState(false);
@@ -604,6 +609,25 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     setAnalyticsLoading(false);
   }, [token, storeId, analyticsHours]);
 
+  // Trailing-7-day daily p50/p90/p99 ticket times for the SLA chart.
+  // Independent of the bump-time window selector so the SLA reference
+  // bands (8/10/12 min) always stay legible.
+  const loadTicketTimes = useCallback(async () => {
+    if (!storeId) {
+      setTicketTimes(null);
+      return;
+    }
+    setTicketTimesLoading(true);
+    try {
+      const res = await fetch(`/api/line-coach/analytics/ticket-times?store=${storeId}&days=7`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setTicketTimes(await res.json());
+      else setTicketTimes(null);
+    } catch { setTicketTimes(null); }
+    setTicketTimesLoading(false);
+  }, [token, storeId]);
+
   const loadMaintenance = useCallback(async () => {
     setMaintBusy(true);
     try {
@@ -639,9 +663,9 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
 
   useEffect(() => {
     if (token && activeTab === 'Webhooks') { loadWebhookLogs(); loadHealth(); }
-    if (token && activeTab === 'Analytics') loadAnalytics();
+    if (token && activeTab === 'Analytics') { loadAnalytics(); loadTicketTimes(); }
     if (token && activeTab === 'Maintenance') loadMaintenance();
-  }, [token, activeTab, loadWebhookLogs, loadHealth, loadAnalytics, loadMaintenance]);
+  }, [token, activeTab, loadWebhookLogs, loadHealth, loadAnalytics, loadTicketTimes, loadMaintenance]);
 
   function importCsvFor(key, validator) {
     return (e) => {
@@ -1396,8 +1420,105 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   function renderAnalyticsTab() {
     const a = analytics;
     const maxBucket = a?.hourly?.length ? Math.max(...a.hourly.map((b) => b.count)) : 1;
+
+    // SLA chart: trailing 7 days of p50/p90/p99 ticket time with the
+    // 8/10/12-min reference bands. Hand-rolled SVG to keep the bundle
+    // free of a charting dep — small and the data is at most 7 points.
+    const sla = ticketTimes?.points || [];
+    const slaTargets = config?.hold_times || {};
+    const slaTargetMin = slaTargets.sla_target_minutes ?? 8;
+    const slaBreachMin = slaTargets.sla_breach_minutes ?? 10;
+    const slaCleanupMin = slaTargets.max_ticket_minutes ?? 12;
+    const W = 720;
+    const H = 240;
+    const padL = 40, padR = 16, padT = 16, padB = 32;
+    const innerW = W - padL - padR;
+    const innerH = H - padT - padB;
+    const dataMaxSec = Math.max(
+      slaCleanupMin * 60 + 60,
+      ...sla.flatMap((p) => [p.p50 || 0, p.p90 || 0, p.p99 || 0]),
+    );
+    const yMaxMin = Math.ceil(dataMaxSec / 60 / 5) * 5; // round up to nearest 5 min
+    const yScale = (sec) => padT + innerH - (sec / 60 / yMaxMin) * innerH;
+    const xScale = (i) => sla.length <= 1 ? padL + innerW / 2 : padL + (i / (sla.length - 1)) * innerW;
+    const linePath = (key) => sla
+      .map((p, i) => `${i === 0 ? 'M' : 'L'}${xScale(i).toFixed(1)},${yScale(p[key] || 0).toFixed(1)}`)
+      .join(' ');
+
     return (
       <div style={styles.panel}>
+        {/* SLA chart — last 7 days vs. brand promise */}
+        <div style={{ marginBottom: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+            <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", letterSpacing: '1.5px', textTransform: 'uppercase', fontSize: '0.85rem' }}>
+              Out-the-door time vs. 10-min brand promise (last 7 days)
+            </div>
+            <button style={{ ...styles.btnSecondary, fontSize: '0.75rem', padding: '4px 8px' }} onClick={loadTicketTimes} disabled={ticketTimesLoading}>
+              {ticketTimesLoading ? '...' : 'Refresh'}
+            </button>
+          </div>
+          {sla.length === 0 ? (
+            <div style={{ background: BRAND.charcoal, borderRadius: '8px', padding: '40px', textAlign: 'center', color: `${BRAND.cream}60` }}>
+              {ticketTimesLoading ? 'Loading...' : 'No bumped orders in last 7 days'}
+            </div>
+          ) : (
+            <div style={{ background: BRAND.charcoal, borderRadius: '8px', padding: '12px' }}>
+              <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
+                {/* Y-axis grid + labels (every 2 min) */}
+                {Array.from({ length: Math.floor(yMaxMin / 2) + 1 }, (_, i) => i * 2).map((m) => {
+                  const y = yScale(m * 60);
+                  return (
+                    <g key={`grid-${m}`}>
+                      <line x1={padL} y1={y} x2={W - padR} y2={y} stroke={`${BRAND.cream}15`} strokeWidth="1" />
+                      <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="10" fill={`${BRAND.cream}80`} fontFamily="monospace">{m}m</text>
+                    </g>
+                  );
+                })}
+                {/* SLA reference bands */}
+                <line x1={padL} y1={yScale(slaTargetMin * 60)} x2={W - padR} y2={yScale(slaTargetMin * 60)}
+                  stroke="#F2C94C" strokeWidth="1.5" strokeDasharray="4,4" opacity="0.7" />
+                <text x={W - padR - 4} y={yScale(slaTargetMin * 60) - 4} textAnchor="end" fontSize="10" fill="#F2C94C" fontFamily="'Oswald', sans-serif" letterSpacing="1px">
+                  {`TARGET ${slaTargetMin}m`}
+                </text>
+                <line x1={padL} y1={yScale(slaBreachMin * 60)} x2={W - padR} y2={yScale(slaBreachMin * 60)}
+                  stroke="#D64545" strokeWidth="1.5" strokeDasharray="4,4" opacity="0.85" />
+                <text x={W - padR - 4} y={yScale(slaBreachMin * 60) - 4} textAnchor="end" fontSize="10" fill="#D64545" fontFamily="'Oswald', sans-serif" letterSpacing="1px">
+                  {`BRAND PROMISE ${slaBreachMin}m`}
+                </text>
+                <line x1={padL} y1={yScale(slaCleanupMin * 60)} x2={W - padR} y2={yScale(slaCleanupMin * 60)}
+                  stroke={`${BRAND.cream}50`} strokeWidth="1" strokeDasharray="2,4" />
+                <text x={W - padR - 4} y={yScale(slaCleanupMin * 60) - 4} textAnchor="end" fontSize="10" fill={`${BRAND.cream}80`} fontFamily="'Oswald', sans-serif" letterSpacing="1px">
+                  {`CLEANUP ${slaCleanupMin}m`}
+                </text>
+                {/* Data lines */}
+                <path d={linePath('p50')} fill="none" stroke={BRAND.green || '#6FCF97'} strokeWidth="2" />
+                <path d={linePath('p90')} fill="none" stroke={BRAND.gold} strokeWidth="2" />
+                <path d={linePath('p99')} fill="none" stroke="#D64545" strokeWidth="2" />
+                {/* Data points + labels */}
+                {sla.map((p, i) => (
+                  <g key={p.day}>
+                    {p.p50 != null && <circle cx={xScale(i)} cy={yScale(p.p50)} r="3" fill={BRAND.green || '#6FCF97'} />}
+                    {p.p90 != null && <circle cx={xScale(i)} cy={yScale(p.p90)} r="3" fill={BRAND.gold} />}
+                    {p.p99 != null && <circle cx={xScale(i)} cy={yScale(p.p99)} r="3" fill="#D64545" />}
+                    <text x={xScale(i)} y={H - padB + 14} textAnchor="middle" fontSize="9" fill={`${BRAND.cream}80`} fontFamily="monospace">
+                      {p.day.slice(5)}
+                    </text>
+                    <text x={xScale(i)} y={H - padB + 26} textAnchor="middle" fontSize="9" fill={`${BRAND.cream}50`} fontFamily="'Oswald', sans-serif">
+                      n={p.n}
+                    </text>
+                  </g>
+                ))}
+              </svg>
+              {/* Legend */}
+              <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', marginTop: '4px', fontSize: '0.75rem', fontFamily: "'Oswald', sans-serif", letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+                <span style={{ color: BRAND.green || '#6FCF97' }}>● p50 median</span>
+                <span style={{ color: BRAND.gold }}>● p90</span>
+                <span style={{ color: '#D64545' }}>● p99 tail</span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
           <div style={{ color: BRAND.cream }}>Window:</div>
           <select style={{ ...styles.input, marginBottom: 0, width: 'auto' }} value={analyticsHours}
