@@ -47,6 +47,20 @@ function buildMessage(recap, slaBreachMin) {
     ? `\nCleanup-bumped: ${recap.cleanup_bumped} (hit the 12-min wall — not counted in averages above)`
     : '';
 
+  // Anomaly section: only render if there's something to flag.
+  // Anomaly is demand-pattern (customer ordered more or less than the
+  // 14-day baseline) — not waste, since lc_orders.sides records what
+  // was ordered, not what was prepped. The recap calls this out
+  // honestly so managers don't misread the signal.
+  const anomalies = recap.anomalies || [];
+  const anomalySection = anomalies.length > 0
+    ? '\n*⚠️ Demand anomalies (vs 14-day avg):*\n' + anomalies.map((a) => {
+        const arrow = a.anomaly_flag === 'high' ? '↑' : '↓';
+        const pct = a.pct_vs_avg != null ? `${a.pct_vs_avg}% of avg` : '—';
+        return `• ${a.name}: ${a.count} ordered (${arrow} ${pct}, baseline ${a.avg_14d})`;
+      }).join('\n') + '\n'
+    : '';
+
   return [
     `🐦 *WILDBIRD — ${name} — yesterday (${recap.day})*`,
     '',
@@ -54,7 +68,7 @@ function buildMessage(recap, slaBreachMin) {
     `Avg out-the-door: ${fmtSec(recap.avg_seconds)}   ${avgUnder ? '✅ under' : '⚠️ over'} ${slaBreachMin}-min brand promise`,
     `p90:            ${fmtSec(recap.p90_seconds)}   ${p90Under ? '✅' : '⚠️ tail edging over'}`,
     `Over-SLA:       ${recap.over_sla} (${overSlaPct}%)${recap.over_sla_pct > 5 ? '   ⚠️ investigate' : ''}` + cleanupNote,
-    '',
+    anomalySection,
     'Top batches:',
     sides,
     '',
