@@ -3,7 +3,6 @@ import { createHmac } from 'crypto';
 import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId, logWebhook, getConfig, isWithinServiceWindow } from '@/lib/line-coach';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
-import { getServiceClient } from '@/lib/supabase';
 import { canonicalSideName } from '@/lib/side-canonical';
 
 function clientIp(request) {
@@ -240,46 +239,6 @@ export async function POST(request) {
       // Fail-open: a config-load error must never silently drop real
       // service traffic. Log and continue.
       console.error('service-hours guard config load failed:', cfgErr.message);
-    }
-
-    // TEMPORARY DEBUG: persist a SHAPE of one webhook payload + the
-    // customer/dining-option branches into a Supabase debug table so we
-    // can query the full data (Vercel log API truncates aggressively).
-    // Remove this block + the debug table once parsing is fixed.
-    try {
-      const shape = (obj, depth = 2) => {
-        if (obj == null || typeof obj !== 'object') return typeof obj;
-        if (Array.isArray(obj)) return obj.length === 0 ? '[]' : `[${shape(obj[0], depth - 1)}]`;
-        if (depth <= 0) return '{...}';
-        const out = {};
-        for (const k of Object.keys(obj)) out[k] = shape(obj[k], depth - 1);
-        return out;
-      };
-      const customerBlobs = {
-        order_customer: toastOrder.customer || null,
-        delivery_info: toastOrder.deliveryInfo || null,
-        curbside: toastOrder.curbsidePickupInfo || null,
-        order_source: toastOrder.source || null,
-        check_count: (toastOrder.checks || []).length,
-        check_customers: (toastOrder.checks || []).map((c) => ({
-          customer: c.customer || null,
-          tabName: c.tabName || null,
-          customerCompany: c.customerCompany || null,
-          displayNumber: c.displayNumber || null,
-          dining_option: c.diningOption || null,
-          source: c.source || null,
-        })),
-      };
-      const db = getServiceClient();
-      const dbg = await db.from('lc_debug_payloads').insert({
-        toast_order_id: toastOrderGuid,
-        store_id: storeId,
-        shape: shape(toastOrder, 4),
-        customer_blobs: customerBlobs,
-      });
-      if (dbg.error) console.log('debug insert error:', dbg.error.message);
-    } catch (logErr) {
-      console.log('debug log failed:', logErr.message);
     }
 
     // ── Detect completed/voided → auto-bump ─────────────
