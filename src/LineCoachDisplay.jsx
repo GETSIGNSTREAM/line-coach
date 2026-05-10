@@ -742,6 +742,11 @@ export default function LineCoachDisplay({ storeId }) {
         const isFutureOrder = fireAt.getTime() > now.getTime();
 
         return {
+          // Carry the row id through so touch-to-bump and the
+          // holdProgress check have a real comparison value.
+          // Without this, holdProgress?.orderId === order.id collapsed
+          // into undefined === undefined and crashed on .pct.
+          id: order.id,
           orderNum: order.order_number || '—',
           customerName: order.customer_name || null,
           items,
@@ -1256,7 +1261,14 @@ export default function LineCoachDisplay({ storeId }) {
                     const allergyNote = isAllergyNote(order.notes) ? order.notes : null;
                     const inlineNote = allergyNote ? null : order.notes;
 
-                    const isHolding = holdProgress?.orderId === order.id;
+                    // Guard against undefined collision: if order.id is
+                    // undefined (e.g. fresh from getOrderSequence before
+                    // realtime confirms), holdProgress?.orderId === undefined
+                    // would be `undefined === undefined` → true, then
+                    // crash reading .pct on a null holdProgress.
+                    const isHolding = !!holdProgress
+                      && order.id != null
+                      && holdProgress.orderId === order.id;
                     const holdPct = isHolding ? holdProgress.pct : 0;
                     const orderHandlers = touchEnabled && order.id ? {
                       onPointerDown: (e) => {
