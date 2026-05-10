@@ -108,15 +108,20 @@ export default function LineCoachDisplay({ storeId }) {
   const UNDO_WINDOW_MS = 5000;
 
   // Detect touch capability + URL override. ?touch=1 forces on, ?touch=0
-  // forces off, anything else auto-detects.
-  const touchEnabled = (() => {
-    if (typeof window === 'undefined') return false;
+  // forces off, anything else auto-detects. Set in an effect (post-mount)
+  // so the SSR pass and first client render see the same value (false)
+  // and React doesn't throw a hydration mismatch.
+  const [touchEnabled, setTouchEnabled] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const override = params.get('touch');
-    if (override === '1') return true;
-    if (override === '0') return false;
-    return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-  })();
+    if (override === '1') { setTouchEnabled(true); return; }
+    if (override === '0') { setTouchEnabled(false); return; }
+    setTouchEnabled(
+      'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0
+    );
+  }, []);
 
   useEffect(() => {
     if (supabaseUrl && supabaseAnonKey) {
