@@ -163,7 +163,7 @@ const styles = {
   deviceOffline: { color: `${BRAND.cream}60`, fontSize: '0.8rem' },
 };
 
-const TABS = ['Menu', 'Sides', 'Tips', 'Hold Times', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Maintenance'];
+const TABS = ['Menu', 'Sides', 'Tips', 'Hold Times', 'Service Hours', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Maintenance'];
 
 const ALLOWED_STATIONS = ['oven', 'grill', 'fryer', 'line', 'cold', 'hot_hold', 'grab'];
 
@@ -1052,6 +1052,80 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     );
   }
 
+  function renderServiceHoursTab() {
+    // Per-store open/close in IANA tz, edited brand-wide. The webhook
+    // guard auto-pauses ingest outside [open, close + 15 min] so post-
+    // close Toast retries don't pollute lc_orders. Empty hours for a
+    // store = fail-open (webhook still accepts).
+    const sh = config.service_hours || {};
+    const TZ_OPTIONS = [
+      'America/Los_Angeles',
+      'America/Denver',
+      'America/Chicago',
+      'America/New_York',
+    ];
+    const recipients = config.recap_recipients || {};
+    const updateStore = (slug, key, value) => {
+      const next = { ...sh, [slug]: { ...(sh[slug] || {}), [key]: value } };
+      updateConfig('service_hours', next);
+    };
+    const updateRecipient = (slug, value) => {
+      updateConfig('recap_recipients', { ...recipients, [slug]: value });
+    };
+    return (
+      <div style={styles.panel}>
+        <BrandWideBanner />
+        <p style={{ color: BRAND.cream, marginTop: 0 }}>
+          Open/close hours auto-pause webhook ingest outside <strong>[open, close + 15 min]</strong> so late-night Toast retries don&apos;t create phantoms.
+          Recipient is the Slack user ID (e.g. <code>U0ABC123</code>) who gets the daily recap DM at 5am PT.
+        </p>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: BRAND.charcoalDark }}>
+              <th style={styles.th}>Store</th>
+              <th style={styles.th}>Open</th>
+              <th style={styles.th}>Close</th>
+              <th style={styles.th}>Timezone</th>
+              <th style={styles.th}>Recap Slack ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            {STORE_OPTIONS.map((s) => {
+              const win = sh[s.slug] || {};
+              return (
+                <tr key={s.slug} style={{ borderBottom: `1px solid ${BRAND.charcoalDark}` }}>
+                  <td style={{ ...styles.td, fontWeight: 600 }}>{s.name}</td>
+                  <td style={styles.td}>
+                    <input type="time" style={{ ...styles.input, marginBottom: 0, width: '110px' }}
+                      value={win.open || ''}
+                      onChange={(e) => updateStore(s.slug, 'open', e.target.value)} />
+                  </td>
+                  <td style={styles.td}>
+                    <input type="time" style={{ ...styles.input, marginBottom: 0, width: '110px' }}
+                      value={win.close || ''}
+                      onChange={(e) => updateStore(s.slug, 'close', e.target.value)} />
+                  </td>
+                  <td style={styles.td}>
+                    <select style={{ ...styles.input, marginBottom: 0, width: '180px' }}
+                      value={win.tz || 'America/Los_Angeles'}
+                      onChange={(e) => updateStore(s.slug, 'tz', e.target.value)}>
+                      {TZ_OPTIONS.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                    </select>
+                  </td>
+                  <td style={styles.td}>
+                    <input type="text" placeholder="U0ABC123" style={{ ...styles.input, marginBottom: 0, width: '140px', fontFamily: 'monospace' }}
+                      value={recipients[s.slug] || ''}
+                      onChange={(e) => updateRecipient(s.slug, e.target.value.trim())} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   function renderSettingsTab() {
     const settings = config.settings || {};
     return (
@@ -1460,7 +1534,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     );
   }
 
-  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Hold Times': renderHoldTimesTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, Maintenance: renderMaintenanceTab };
+  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Hold Times': renderHoldTimesTab, 'Service Hours': renderServiceHoursTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, Maintenance: renderMaintenanceTab };
 
   return (
     <div style={styles.container}>

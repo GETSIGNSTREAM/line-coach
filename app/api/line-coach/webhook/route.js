@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createHmac } from 'crypto';
-import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId, logWebhook } from '@/lib/line-coach';
+import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId, logWebhook, getConfig, isWithinServiceWindow } from '@/lib/line-coach';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 import { getServiceClient } from '@/lib/supabase';
@@ -209,6 +209,37 @@ export async function POST(request) {
     if (!toastOrderGuid) {
       logWebhook({ store_id: storeId, status: 'ignored', http_status: 200, ip, payload: body, duration_ms: Date.now() - start, error_message: 'no order guid' });
       return NextResponse.json({ status: 'ignored', reason: 'no order guid' });
+    }
+
+    // ── Service-hours guard ─────────────────────────────
+    // Toast retries late-night webhooks and pushes through orders
+    // placed seconds before close, both of which create phantoms in
+    // lc_orders for kitchens that are already shut down. Skip insert/
+    // bump entirely outside [open, close + 15 min] for the resolved
+    // store. We still log to lc_webhook_log so the admin can see what
+    // got dropped. Returns 200 so Toast doesn't retry the dropped
+    // webhook into a tight loop.
+    try {
+      const { data: storeCfg } = await getConfig(storeId);
+      const hoursMap = storeCfg?.service_hours || {};
+      if (!isWithinServiceWindow(hoursMap, storeId)) {
+        logWebhook({
+          store_id: storeId,
+          status: 'ignored',
+          http_status: 200,
+          event_type: 'closed_hours',
+          toast_order_id: toastOrderGuid,
+          ip,
+          payload: body,
+          duration_ms: Date.now() - start,
+          error_message: 'outside service hours',
+        });
+        return NextResponse.json({ status: 'ok', reason: 'closed' });
+      }
+    } catch (cfgErr) {
+      // Fail-open: a config-load error must never silently drop real
+      // service traffic. Log and continue.
+      console.error('service-hours guard config load failed:', cfgErr.message);
     }
 
     // TEMPORARY DEBUG: persist a SHAPE of one webhook payload + the
