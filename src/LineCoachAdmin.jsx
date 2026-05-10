@@ -1093,12 +1093,16 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
       'America/New_York',
     ];
     const recipients = config.recap_recipients || {};
+    const langs = config.default_languages || {};
     const updateStore = (slug, key, value) => {
       const next = { ...sh, [slug]: { ...(sh[slug] || {}), [key]: value } };
       updateConfig('service_hours', next);
     };
     const updateRecipient = (slug, value) => {
       updateConfig('recap_recipients', { ...recipients, [slug]: value });
+    };
+    const updateLang = (slug, value) => {
+      updateConfig('default_languages', { ...langs, [slug]: value });
     };
 
     // Phone share link generator. Mints a JWT (180-day expiry) via
@@ -1184,6 +1188,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
               <th style={styles.th}>Open</th>
               <th style={styles.th}>Close</th>
               <th style={styles.th}>Timezone</th>
+              <th style={styles.th} title="Default language for the kitchen display + phone. Cooks can override with the EN|ES chip in the display header — that local choice wins for that screen.">Default Language</th>
               <th style={styles.th}>Recap Slack ID</th>
             </tr>
           </thead>
@@ -1208,6 +1213,14 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
                       value={win.tz || 'America/Los_Angeles'}
                       onChange={(e) => updateStore(s.slug, 'tz', e.target.value)}>
                       {TZ_OPTIONS.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                    </select>
+                  </td>
+                  <td style={styles.td}>
+                    <select style={{ ...styles.input, marginBottom: 0, width: '110px' }}
+                      value={langs[s.slug] || 'es'}
+                      onChange={(e) => updateLang(s.slug, e.target.value)}>
+                      <option value="es">Spanish</option>
+                      <option value="en">English</option>
                     </select>
                   </td>
                   <td style={styles.td}>

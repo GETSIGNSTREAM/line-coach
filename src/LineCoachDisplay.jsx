@@ -17,6 +17,21 @@ function normalizeTip(tip) {
   return { en: '', es: '' };
 }
 
+// Pick the chosen-language string from a normalized tip, falling back
+// silently to the other language when the chosen one is empty. Used by
+// every bilingual render site so the language toggle behaves
+// identically across Quality Coach mode, focus-mode coach panel, side
+// quick tip, and the order detail sheet.
+//
+// Returns null only when BOTH sides are empty — caller should suppress.
+function pickTipText(tip, lang) {
+  if (!tip) return null;
+  const en = tip.en && tip.en.trim();
+  const es = tip.es && tip.es.trim();
+  if (lang === 'en') return en || es || null;
+  return es || en || null;
+}
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
@@ -139,6 +154,44 @@ export default function LineCoachDisplay({ storeId }) {
       'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0
     );
   }, []);
+
+  // Language toggle (EN | ES). Resolution priority — first hit wins:
+  //   1. ?lang=en|es URL param (session override)
+  //   2. localStorage 'lc-language' (device sticky — survives reload)
+  //   3. config.default_languages[storeId] (admin per-store default)
+  //   4. 'es' (kitchen-first hardcoded fallback — most cook crews are
+  //      primarily Spanish-speaking)
+  // SSR-safe: starts at 'es', resolved post-mount so the server pass
+  // and first client render agree (no hydration mismatch).
+  const [language, setLanguage] = useState('es');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let lang = null;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const url = params.get('lang');
+      if (url === 'en' || url === 'es') lang = url;
+    } catch { /* malformed URL — fall through */ }
+    if (!lang) {
+      try {
+        const stored = window.localStorage.getItem('lc-language');
+        if (stored === 'en' || stored === 'es') lang = stored;
+      } catch { /* localStorage blocked — fall through */ }
+    }
+    if (!lang) {
+      const adminDefault = config?.default_languages?.[storeId];
+      if (adminDefault === 'en' || adminDefault === 'es') lang = adminDefault;
+    }
+    setLanguage(lang || 'es');
+  }, [config, storeId]);
+
+  function toggleLanguage() {
+    setLanguage((prev) => {
+      const next = prev === 'en' ? 'es' : 'en';
+      try { window.localStorage.setItem('lc-language', next); } catch { /* ignore */ }
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (supabaseUrl && supabaseAnonKey) {
@@ -809,27 +862,26 @@ export default function LineCoachDisplay({ storeId }) {
 
   if (isSlowPeriod && tips.length > 0) {
     const tip = tips[qualityTipIndex % tips.length];
-    const enText = tip.en && tip.en.trim();
-    const esText = tip.es && tip.es.trim();
+    // Single-language mode: pickTipText falls back to the other
+    // language silently if the chosen one is empty, so a partially-
+    // translated tip still renders something useful.
+    const text = pickTipText(tip, language);
+    // Render in the chosen language's native styling — bone Playfair
+    // for English, cream italic Playfair for Spanish — so cooks see
+    // consistent typography per language across all 4 surfaces.
+    const tipStyle = language === 'es'
+      ? { ...s.qualityTipEs, fontStyle: 'italic' }
+      : s.qualityTipEn;
     return (
       <div style={s.container}>
         <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-        <Header now={now} orderCount={0} staleCount={staleCount} />
+        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} />
         <div style={s.qualityCoach}>
           <div style={s.qualityLabel}>QUALITY COACH</div>
-          <div style={s.qualityTipBlock} key={qualityTipIndex}>
-            {/* Language labels removed — Playfair English vs italic
-                cream Spanish is enough visual signal on a kitchen
-                monitor. Less to read, faster to absorb. */}
-            {enText && (
+          <div style={s.qualityTipBlock} key={`${qualityTipIndex}-${language}`}>
+            {text && (
               <div style={s.qualityLangSection}>
-                <div style={s.qualityTipEn}>{enText}</div>
-              </div>
-            )}
-            {enText && esText && <div style={s.qualityDivider} />}
-            {esText && (
-              <div style={s.qualityLangSection}>
-                <div style={{ ...s.qualityTipEs, fontStyle: 'italic' }}>{esText}</div>
+                <div style={tipStyle}>{text}</div>
               </div>
             )}
           </div>
@@ -879,8 +931,10 @@ export default function LineCoachDisplay({ storeId }) {
     const tipToShow = primaryCoachTip && (primaryCoachTip.en || primaryCoachTip.es)
       ? primaryCoachTip
       : fallbackTip;
-    const tipEn = tipToShow?.en && tipToShow.en.trim();
-    const tipEs = tipToShow?.es && tipToShow.es.trim();
+    // Single-language with silent fallback. Returns null when both
+    // halves of the tip are empty — caller renders the "—" empty
+    // state instead.
+    const tipText = pickTipText(tipToShow, language);
 
     const ticketBorderColor = order.priority === 'rush' ? BRAND.red : order.ticketColor;
     const diningColors = {
@@ -915,7 +969,7 @@ export default function LineCoachDisplay({ storeId }) {
             to   { opacity: 1; transform: scale(1);    }
           }
         `}</style>
-        <Header now={now} orderCount={1} />
+        <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} />
 
         {allergyNote && (
           <div style={{
@@ -992,7 +1046,7 @@ export default function LineCoachDisplay({ storeId }) {
         {/* Two-column body: photo + coach tip ─────────── */}
         {/* `key` includes the rotating item index so each rotation
             re-mounts the block and triggers the fade-in animation. */}
-        <div key={`focus-${focusItemIndex % itemCount}`} style={{
+        <div key={`focus-${focusItemIndex % itemCount}-${language}`} style={{
           display: 'flex',
           gap: '24px',
           padding: '16px',
@@ -1143,36 +1197,20 @@ export default function LineCoachDisplay({ storeId }) {
                 </div>
               )}
             </div>
-            {/* EN and ES blocks — typography (color + size) already
-                differentiates the languages, so explicit ENGLISH /
-                ESPAÑOL labels are pure noise on a kitchen monitor. */}
-            {tipEn && (
+            {/* Single-language render. Native styling per language:
+                English in Playfair bone, Spanish in Playfair italic
+                cream — same visual language as the Quality Coach
+                + side quick-tip surfaces. */}
+            {tipText && (
               <div style={{
-                marginBottom: tipEs ? 'clamp(1.5vh, 2vh, 3vh)' : 0,
-                fontSize: 'clamp(1.6rem, 2.6vw, 2.6rem)',
-                color: BRAND.bone,
+                fontSize: language === 'en' ? 'clamp(1.6rem, 2.6vw, 2.6rem)' : 'clamp(1.4rem, 2.3vw, 2.3rem)',
+                color: language === 'en' ? BRAND.bone : BRAND.cream,
                 fontFamily: "'Playfair Display', Georgia, serif",
                 lineHeight: 1.3,
-              }}>{tipEn}</div>
+                fontStyle: language === 'es' ? 'italic' : 'normal',
+              }}>{tipText}</div>
             )}
-            {tipEn && tipEs && (
-              <div style={{
-                width: '40%',
-                height: '1px',
-                background: `${BRAND.gold}55`,
-                margin: 'clamp(1vh, 1.5vh, 2vh) 0',
-              }} />
-            )}
-            {tipEs && (
-              <div style={{
-                fontSize: 'clamp(1.4rem, 2.3vw, 2.3rem)',
-                color: BRAND.cream,
-                fontFamily: "'Playfair Display', Georgia, serif",
-                lineHeight: 1.3,
-                fontStyle: 'italic',
-              }}>{tipEs}</div>
-            )}
-            {!tipEn && !tipEs && (
+            {!tipText && (
               <div style={{
                 fontSize: 'clamp(1.2rem, 1.6vw, 1.6rem)',
                 color: BRAND.cream,
@@ -1234,7 +1272,7 @@ export default function LineCoachDisplay({ storeId }) {
           to   { opacity: 1; }
         }
       `}</style>
-      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} />
+      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} />
       {bumpedToast && (
         <UndoToast orderNum={bumpedToast.orderNum} onUndo={handleUndo} />
       )}
@@ -1245,6 +1283,7 @@ export default function LineCoachDisplay({ storeId }) {
           configSides={configSides}
           warningMin={warningMin}
           dangerMin={dangerMin}
+          language={language}
           onClose={() => setDetailOrder(null)}
         />
       )}
@@ -1749,20 +1788,18 @@ export default function LineCoachDisplay({ storeId }) {
             })}
           </div>
 
-          {/* Quick Tip */}
+          {/* Quick Tip — single language with silent fallback. */}
           {tips.length > 0 && (() => {
             const tip = tips[qualityTipIndex % tips.length];
-            const enText = tip.en && tip.en.trim();
-            const esText = tip.es && tip.es.trim();
+            const text = pickTipText(tip, language);
+            if (!text) return null;
+            const tipStyle = language === 'es'
+              ? { ...s.quickTipTextEs, fontStyle: 'italic' }
+              : s.quickTipText;
             return (
               <div style={s.quickTip}>
                 <div style={s.quickTipLabel}>TIP</div>
-                {enText && (
-                  <div style={s.quickTipText}>{enText}</div>
-                )}
-                {esText && (
-                  <div style={{ ...s.quickTipTextEs, fontStyle: 'italic', marginTop: enText ? '8px' : 0 }}>{esText}</div>
-                )}
+                <div style={tipStyle}>{text}</div>
               </div>
             );
           })()}
@@ -1847,7 +1884,7 @@ function UndoToast({ orderNum, onUndo }) {
 // hold-to-bump as before. Auto-dismisses after 30s of no interaction
 // because the wall display is unattended much of the time and a
 // stuck sheet would defeat the brand-promise visibility.
-function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin, onClose }) {
+function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin, language = 'es', onClose }) {
   // Auto-dismiss timer. Reset on any interaction inside the sheet
   // (a manager tapping through items shouldn't trip the timeout).
   useEffect(() => {
@@ -2044,20 +2081,23 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                       {item.modifiers.join(' · ')}
                     </div>
                   )}
-                  {coachTip && (coachTip.en || coachTip.es) && (
-                    <div style={{ marginTop: '10px', borderLeft: `3px solid ${BRAND.gold}`, paddingLeft: '12px' }}>
-                      {coachTip.en && (
-                        <div style={{ fontFamily: "'Playfair Display', Georgia, serif", color: BRAND.cream, fontSize: '1rem', lineHeight: 1.4 }}>
-                          {coachTip.en}
+                  {(() => {
+                    const coachText = pickTipText(coachTip, language);
+                    if (!coachText) return null;
+                    return (
+                      <div style={{ marginTop: '10px', borderLeft: `3px solid ${BRAND.gold}`, paddingLeft: '12px' }}>
+                        <div style={{
+                          fontFamily: "'Playfair Display', Georgia, serif",
+                          color: language === 'en' ? BRAND.cream : `${BRAND.cream}cc`,
+                          fontSize: language === 'en' ? '1rem' : '0.95rem',
+                          fontStyle: language === 'es' ? 'italic' : 'normal',
+                          lineHeight: 1.4,
+                        }}>
+                          {coachText}
                         </div>
-                      )}
-                      {coachTip.es && (
-                        <div style={{ fontFamily: "'Playfair Display', Georgia, serif", color: `${BRAND.cream}cc`, fontSize: '0.95rem', fontStyle: 'italic', lineHeight: 1.4, marginTop: '4px' }}>
-                          {coachTip.es}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             );
@@ -2126,7 +2166,7 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
   );
 }
 
-function Header({ now, orderCount, staleCount = 0 }) {
+function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle }) {
   return (
     <div style={s.header}>
       <div style={s.headerLeft}>
@@ -2167,7 +2207,39 @@ function Header({ now, orderCount, staleCount = 0 }) {
           </span>
         )}
       </div>
-      <span style={s.clock}>{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {language && onLanguageToggle && (
+          // Language toggle chip. Uppercase = active language.
+          // Touch target ≥44px height via padding so a greasy-handed
+          // tap is reliable on the wall display.
+          <button
+            type="button"
+            onClick={onLanguageToggle}
+            aria-label={`Toggle language (current: ${language === 'en' ? 'English' : 'Spanish'})`}
+            title={language === 'en' ? 'Showing English · tap for Spanish' : 'Showing Spanish · tap for English'}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '999px',
+              background: 'rgba(212, 165, 116, 0.18)',
+              color: BRAND.gold,
+              border: 'none',
+              fontSize: '0.8rem',
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              letterSpacing: '2px',
+              cursor: 'pointer',
+              minHeight: '44px',
+              minWidth: '64px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {language === 'en' ? 'EN · es' : 'es · EN'}
+          </button>
+        )}
+        <span style={s.clock}>{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+      </div>
     </div>
   );
 }

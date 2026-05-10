@@ -65,6 +65,40 @@ export default function LineCoachPhone({ token }) {
     return () => window.removeEventListener('hashchange', handler);
   }, []);
 
+  // Language toggle. Mirrors the kitchen display's priority chain:
+  //   ?lang=en|es URL > localStorage 'lc-language' > 'es' default
+  // Same localStorage key as the display so a manager who flips the
+  // wall display also flips their phone consistently.
+  //
+  // Phone today renders zero bilingual content — this wiring is
+  // forward-looking. When ES content lands on the phone (section
+  // labels, recap excerpts, anomaly notes), the toggle just works.
+  const [language, setLanguage] = useState('es');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let lang = null;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const url = params.get('lang');
+      if (url === 'en' || url === 'es') lang = url;
+    } catch { /* ignore */ }
+    if (!lang) {
+      try {
+        const stored = window.localStorage.getItem('lc-language');
+        if (stored === 'en' || stored === 'es') lang = stored;
+      } catch { /* ignore */ }
+    }
+    setLanguage(lang || 'es');
+  }, []);
+
+  function toggleLanguage() {
+    setLanguage((prev) => {
+      const next = prev === 'en' ? 'es' : 'en';
+      try { window.localStorage.setItem('lc-language', next); } catch { /* ignore */ }
+      return next;
+    });
+  }
+
   const fetchData = useCallback(async () => {
     if (!token) {
       setError('No token');
@@ -128,19 +162,38 @@ export default function LineCoachPhone({ token }) {
   }
 
   if (data.mode === 'store') {
-    return <StoreView data={data} onBack={() => { window.location.hash = ''; }} />;
+    return (
+      <StoreView
+        data={data}
+        language={language}
+        onLanguageToggle={toggleLanguage}
+        onBack={() => { window.location.hash = ''; }}
+      />
+    );
   }
-  return <BrandView data={data} onPickStore={(slug) => { window.location.hash = slug; }} />;
+  return (
+    <BrandView
+      data={data}
+      language={language}
+      onLanguageToggle={toggleLanguage}
+      onPickStore={(slug) => { window.location.hash = slug; }}
+    />
+  );
 }
 
 // ── Brand overview ──────────────────────────────────────────
 
-function BrandView({ data, onPickStore }) {
+function BrandView({ data, onPickStore, language, onLanguageToggle }) {
   const slaTargetMin = data.sla_target_minutes ?? 8;
   const slaBreachMin = data.sla_breach_minutes ?? 10;
   return (
     <div style={s.page}>
-      <Header title="Today" subtitle={`${data.stores.length} stores · sorted worst-first`} />
+      <Header
+        title="Today"
+        subtitle={`${data.stores.length} stores · sorted worst-first`}
+        language={language}
+        onLanguageToggle={onLanguageToggle}
+      />
       <div style={s.legend}>
         <span style={{ color: BRAND.green }}>● ≤ {slaTargetMin}m</span>
         <span style={{ color: BRAND.yellow }}>● amber</span>
@@ -210,7 +263,7 @@ function StoreRow({ row, onPick }) {
 
 // ── Per-store drill-in ──────────────────────────────────────
 
-function StoreView({ data, onBack }) {
+function StoreView({ data, onBack, language, onLanguageToggle }) {
   const today = data.today || {};
   const sev = data.breach_severity ?? -1;
   const color = SEVERITY_COLOR[sev] ?? BRAND.cream;
@@ -225,6 +278,8 @@ function StoreView({ data, onBack }) {
         subtitle={`Active right now: ${data.active_now ?? 0}`}
         onBack={onBack}
         accentColor={color}
+        language={language}
+        onLanguageToggle={onLanguageToggle}
       />
       <div style={s.section}>
         <div style={s.sectionLabel}>Today</div>
@@ -357,7 +412,7 @@ function TrendChart({ points, slaTargetMin, slaBreachMin, cleanupMin }) {
 
 // ── Chrome ──────────────────────────────────────────────────
 
-function Header({ title, subtitle, onBack, accentColor }) {
+function Header({ title, subtitle, onBack, accentColor, language, onLanguageToggle }) {
   return (
     <div style={{
       ...s.header,
@@ -372,6 +427,34 @@ function Header({ title, subtitle, onBack, accentColor }) {
         <div style={s.headerTitle}>{title}</div>
         {subtitle && <div style={s.headerSubtitle}>{subtitle}</div>}
       </div>
+      {language && onLanguageToggle && (
+        // Language toggle. Mirrors the kitchen-display chip so a
+        // manager who flips the wall display also flips their phone
+        // — same localStorage key 'lc-language'. Phone has no
+        // bilingual content yet; the toggle is forward-looking.
+        <button
+          type="button"
+          onClick={onLanguageToggle}
+          aria-label={`Toggle language (current: ${language === 'en' ? 'English' : 'Spanish'})`}
+          style={{
+            marginLeft: 'auto',
+            padding: '8px 12px',
+            borderRadius: '999px',
+            background: 'rgba(212, 165, 116, 0.18)',
+            color: BRAND.gold,
+            border: 'none',
+            fontSize: '0.75rem',
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 700,
+            letterSpacing: '2px',
+            cursor: 'pointer',
+            minHeight: '44px',
+            minWidth: '60px',
+          }}
+        >
+          {language === 'en' ? 'EN · es' : 'es · EN'}
+        </button>
+      )}
     </div>
   );
 }
