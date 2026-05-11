@@ -87,6 +87,23 @@ function stationFor(itemName, menuItems) {
   return m?.station || null;
 }
 
+// Per-channel color palette for the order-channel badge. Delivery
+// couriers each get their brand-adjacent wash; in-store gets no
+// badge (default state — most volume, no need for chrome).
+const CHANNEL_STYLES = {
+  doordash:  { background: `${BRAND.red}30`,        color: BRAND.red,        border: `1px solid ${BRAND.red}55` },
+  ubereats:  { background: `${BRAND.terracotta}30`, color: BRAND.terracotta, border: `1px solid ${BRAND.terracotta}55` },
+  grubhub:   { background: `${BRAND.gold}30`,       color: BRAND.gold,       border: `1px solid ${BRAND.gold}55` },
+  postmates: { background: `${BRAND.blue}30`,       color: '#9CC4D2',        border: `1px solid ${BRAND.blue}55` },
+};
+
+const CHANNEL_LABELS = {
+  doordash: 'DOORDASH',
+  ubereats: 'UBER',
+  grubhub: 'GRUBHUB',
+  postmates: 'POSTMATES',
+};
+
 // Detect allergy / dietary callouts in order notes. Returns the cleaned
 // text to highlight (or null when the note isn't allergy-related).
 // Trigger words are intentionally broad — a false positive (e.g. "no
@@ -899,6 +916,7 @@ export default function LineCoachDisplay({ storeId }) {
           sides: order.sides || [],
           notes: order.notes || null,
           diningOption: order.dining_option || null,
+          orderChannel: order.order_channel || null,
           priority: order.priority || 'normal',
           priorityRank: order.priority_rank || 30,
           maxCookTime,
@@ -1678,6 +1696,23 @@ export default function LineCoachDisplay({ storeId }) {
                               fontWeight: 700,
                             }}>{order.fireAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>
                           )}
+                          {/* Order channel badge — only for delivery
+                              couriers. In-store / null renders no
+                              badge (most volume, no signal needed).
+                              Cooks treat delivery orders differently
+                              from walk-ins, so this is the highest-
+                              value signal on the sidebar. */}
+                          {order.orderChannel && CHANNEL_STYLES[order.orderChannel] && (
+                            <div style={{
+                              ...CHANNEL_STYLES[order.orderChannel],
+                              fontSize: badgeSize,
+                              padding: '2px 6px',
+                              borderRadius: '3px',
+                              fontFamily: "'Oswald', sans-serif",
+                              fontWeight: 700,
+                              letterSpacing: '1px',
+                            }}>{CHANNEL_LABELS[order.orderChannel]}</div>
+                          )}
                           {!order.isFutureOrder && (
                             <div style={{
                               fontSize: timerSize,
@@ -2110,6 +2145,17 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                 <span style={{ background: BRAND.charcoalLight, color: BRAND.cream, fontFamily: "'Oswald', sans-serif", fontWeight: 700, letterSpacing: '2px', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem' }}>
                   {String(order.diningOption).toUpperCase()}
                 </span>
+              )}
+              {order.orderChannel && CHANNEL_STYLES[order.orderChannel] && (
+                <span style={{
+                  ...CHANNEL_STYLES[order.orderChannel],
+                  fontFamily: "'Oswald', sans-serif",
+                  fontWeight: 700,
+                  letterSpacing: '2px',
+                  padding: '4px 10px',
+                  borderRadius: '4px',
+                  fontSize: '0.85rem',
+                }}>{CHANNEL_LABELS[order.orderChannel]}</span>
               )}
               {order.isFutureOrder && order.fireAt && (
                 <span style={{ background: BRAND.blue, color: BRAND.charcoal, fontFamily: "'Oswald', sans-serif", fontWeight: 700, letterSpacing: '2px', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem' }}>

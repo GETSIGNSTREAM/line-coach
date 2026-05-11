@@ -86,12 +86,52 @@ function parseCustomerName(tabName) {
   // Strip courier ID prefix if present.
   const stripped = s.replace(COURIER_PREFIX_RE, '').trim();
   if (stripped) s = stripped;
+  // Strip courier SUFFIX too (Grubhub uses "<Name> Grubhub #<id>"
+  // unlike DD/UberEats which use a prefix). Match here so the
+  // customer name is clean regardless of channel.
+  s = s.replace(/\s+Grubhub\s+#\S+\s*$/i, '').trim();
   // Tidy any leftover whitespace runs.
   s = s.replace(/\s+/g, ' ').trim();
   // Reject pure single-letter / very short non-courier values? Keep them.
   // The kitchen will see "Y" for walk-ins where that's all the cashier
   // typed — that's still useful (matches their receipt).
   return s || null;
+}
+
+// Detect the third-party channel an order came through by inspecting
+// Toast's check.tabName, which carries channel signals BEFORE
+// parseCustomerName strips them. Run this on every check before the
+// customer-name parse so we capture the channel even when the prefix
+// is about to be erased.
+//
+// Patterns observed in 7 days of production data (8,469 webhooks):
+//   DoorDash:  "DD <8-hex> <Name>" or "DD <id> PickUp-<Name>"
+//   UberEats:  "  UBER<5-hex> <Name>.  " (whitespace-padded)
+//   Grubhub:   "<Name> Grubhub #<numeric-id>" (suffix, not prefix)
+//   Postmates: "POSTMATES<id> <Name>" (not observed in 7d but pre-mapped)
+//   ChowNow:   pattern unknown; left out until we see one
+//   In-store:  null / single letter / first name / "CARDHOLDER, VISA"
+//
+// Returns one of:
+//   'doordash' | 'ubereats' | 'grubhub' | 'postmates' | 'in_store' | null
+// null means "we couldn't classify this one" — render no badge rather
+// than guess wrong.
+function parseOrderChannel(tabName) {
+  if (!tabName || typeof tabName !== 'string') return null;
+  const s = tabName.trim();
+  if (!s) return null;
+  // CARDHOLDER + null both mean in-store; we treat them the same way.
+  if (CARDHOLDER_RE.test(s)) return 'in_store';
+  if (/^DD[\s_]+[a-f0-9]{4,}/i.test(s)) return 'doordash';
+  if (/^UBER(?:EATS)?[\s_]*[a-f0-9]{4,}/i.test(s)) return 'ubereats';
+  if (/\sGrubhub\s+#\S+\s*$/i.test(s)) return 'grubhub';
+  if (/^GH[\s_]+[a-f0-9]{4,}/i.test(s)) return 'grubhub';
+  if (/^POSTMATES[\s_]*[a-f0-9]{4,}/i.test(s)) return 'postmates';
+  // Anything else (first name, single letter, etc.) → in-store walk-up.
+  // We deliberately classify rather than return null so the column
+  // distinguishes "we tried and it's in-store" from "we haven't run
+  // the parser yet on this row."
+  return 'in_store';
 }
 
 // ── Name cleanup ────────────────────────────────────────
@@ -286,6 +326,11 @@ export async function POST(request) {
     let customerName = null;
     let diningOption = null;
     let specialInstructions = null;
+    // Order channel is extracted from check.tabName BEFORE the
+    // courier prefix is stripped by parseCustomerName. First non-null
+    // classification across checks wins. Falls back to 'in_store'
+    // when checks exist but no channel was identifiable.
+    let orderChannel = null;
 
     for (const check of checks) {
       // Use display number, not the check GUID
@@ -299,6 +344,18 @@ export async function POST(request) {
         specialInstructions = specialInstructions
           ? specialInstructions + ' | ' + check.specialInstructions
           : check.specialInstructions;
+      }
+
+      // Channel detection happens FIRST so the prefix is still
+      // intact when we read it. Prefer the first delivery-courier
+      // classification; only fall back to in_store at the end.
+      if (!orderChannel || orderChannel === 'in_store') {
+        const ch = parseOrderChannel(check.tabName);
+        // Prefer a courier channel over a previous in_store guess
+        // (a multi-check order can mix in-store + delivery; the
+        // delivery signal is the one cooks need to see).
+        if (ch && ch !== 'in_store') orderChannel = ch;
+        else if (!orderChannel && ch) orderChannel = ch;
       }
 
       if (!customerName && check.customer) {
@@ -406,6 +463,7 @@ export async function POST(request) {
       estimated_ready_at: estimatedReadyAt.toISOString(),
       notes: specialInstructions,
       dining_option: diningOptionStr,
+      order_channel: orderChannel,
     };
 
     const { data, error } = await upsertOrderByToastId(toastOrderGuid, order);
