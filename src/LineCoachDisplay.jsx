@@ -87,14 +87,28 @@ function stationFor(itemName, menuItems) {
   return m?.station || null;
 }
 
-// Per-channel color palette for the order-channel badge. Delivery
-// couriers each get their brand-adjacent wash; in-store gets no
-// badge (default state — most volume, no need for chrome).
+// Per-channel color palette — each courier renders in ITS OWN brand
+// color so cooks recognize the badge from muscle memory (the same
+// red they see in the DoorDash app is the same red on the card).
+// 22% alpha fill + full-saturation border/text keeps the badge
+// visible on the dark charcoal card background without blowing out.
+// Postmates is the exception (black bg + yellow text) since black-
+// on-yellow IS its brand identity.
+//
+// Hex sources (Nov 2024 brand kits):
+//   DoorDash:  #FF3008 — the iconic delivery red
+//   UberEats:  #06C167 — "Eats green" (distinct from WILDBIRD green)
+//   Grubhub:   #F26B30 — long-running orange identity
+//   Postmates: #FFD000 on #000 — yellow-on-black is the wordmark
+//
+// Text colors are slightly lightened from the pure brand hex so they
+// read cleanly on charcoal — the eye still locks onto the right
+// brand, but with WCAG-passing contrast.
 const CHANNEL_STYLES = {
-  doordash:  { background: `${BRAND.red}30`,        color: BRAND.red,        border: `1px solid ${BRAND.red}55` },
-  ubereats:  { background: `${BRAND.terracotta}30`, color: BRAND.terracotta, border: `1px solid ${BRAND.terracotta}55` },
-  grubhub:   { background: `${BRAND.gold}30`,       color: BRAND.gold,       border: `1px solid ${BRAND.gold}55` },
-  postmates: { background: `${BRAND.blue}30`,       color: '#9CC4D2',        border: `1px solid ${BRAND.blue}55` },
+  doordash:  { background: 'rgba(255, 48, 8, 0.22)',   color: '#FF6B4A', border: '1px solid rgba(255, 48, 8, 0.55)' },
+  ubereats:  { background: 'rgba(6, 193, 103, 0.22)',  color: '#3FD98E', border: '1px solid rgba(6, 193, 103, 0.55)' },
+  grubhub:   { background: 'rgba(242, 107, 48, 0.22)', color: '#F58A5C', border: '1px solid rgba(242, 107, 48, 0.55)' },
+  postmates: { background: '#000000',                  color: '#FFD000', border: '1px solid rgba(255, 208, 0, 0.55)' },
 };
 
 const CHANNEL_LABELS = {
