@@ -163,7 +163,7 @@ const styles = {
   deviceOffline: { color: `${BRAND.cream}60`, fontSize: '0.8rem' },
 };
 
-const TABS = ['Menu', 'Sides', 'Tips', 'Hold Times', 'Service Hours', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Shift Summary', 'Item Performance', 'Maintenance'];
+const TABS = ['Menu', 'Sides', 'Tips', 'Hold Times', 'Service Hours', 'Dining Options', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Shift Summary', 'Item Performance', 'Maintenance'];
 
 const ALLOWED_STATIONS = ['oven', 'grill', 'fryer', 'line', 'cold', 'hot_hold', 'grab'];
 
@@ -508,6 +508,12 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   const [itemPerfStoreFilter, setItemPerfStoreFilter] = useState('');
   const [itemPerf, setItemPerf] = useState(null);
   const [itemPerfLoading, setItemPerfLoading] = useState(false);
+  // Dining Options tab — list of distinct dining-option GUIDs per
+  // store + admin-editable labels. diningGuids is the API payload;
+  // pendingLabels tracks edits before save (writes via updateConfig
+  // through the existing dining_option_labels BRAND_FIELD path).
+  const [diningGuids, setDiningGuids] = useState(null);
+  const [diningGuidsLoading, setDiningGuidsLoading] = useState(false);
   const [maintStats, setMaintStats] = useState(null);
   const [maintMsg, setMaintMsg] = useState('');
   const [maintBusy, setMaintBusy] = useState(false);
@@ -690,6 +696,18 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     setItemPerfLoading(false);
   }, [token, itemPerfDays, itemPerfStoreFilter]);
 
+  const loadDiningGuids = useCallback(async () => {
+    setDiningGuidsLoading(true);
+    try {
+      const res = await fetch('/api/line-coach/dining-options?days=30', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setDiningGuids(await res.json());
+      else setDiningGuids(null);
+    } catch { setDiningGuids(null); }
+    setDiningGuidsLoading(false);
+  }, [token]);
+
   async function runMaintenance(action, days) {
     setMaintMsg('');
     setMaintBusy(true);
@@ -717,8 +735,9 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     if (token && activeTab === 'Analytics') { loadAnalytics(); loadTicketTimes(); }
     if (token && activeTab === 'Shift Summary') loadShiftSummary();
     if (token && activeTab === 'Item Performance') loadItemPerf();
+    if (token && activeTab === 'Dining Options') loadDiningGuids();
     if (token && activeTab === 'Maintenance') loadMaintenance();
-  }, [token, activeTab, loadWebhookLogs, loadHealth, loadAnalytics, loadTicketTimes, loadShiftSummary, loadItemPerf, loadMaintenance]);
+  }, [token, activeTab, loadWebhookLogs, loadHealth, loadAnalytics, loadTicketTimes, loadShiftSummary, loadItemPerf, loadDiningGuids, loadMaintenance]);
 
   function importCsvFor(key, validator) {
     return (e) => {
@@ -1985,6 +2004,115 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     );
   }
 
+  function renderDiningOptionsTab() {
+    const labels = config.dining_option_labels || {};
+    const guids = diningGuids?.guids || [];
+    // Group by store for the table render.
+    const byStore = new Map();
+    for (const row of guids) {
+      if (!byStore.has(row.store_id)) byStore.set(row.store_id, []);
+      byStore.get(row.store_id).push(row);
+    }
+
+    function updateLabel(storeSlug, guid, value) {
+      const storeLabels = { ...(labels[storeSlug] || {}) };
+      const trimmed = (value || '').trim();
+      if (trimmed) {
+        storeLabels[guid] = trimmed;
+      } else {
+        delete storeLabels[guid];
+      }
+      const next = { ...labels, [storeSlug]: storeLabels };
+      updateConfig('dining_option_labels', next);
+    }
+
+    return (
+      <div style={styles.panel}>
+        <BrandWideBanner />
+        <p style={{ color: BRAND.cream, marginTop: 0 }}>
+          Toast sends dining options as opaque per-restaurant GUIDs.
+          Label each one below (e.g. <strong>Dine In</strong>, <strong>Takeout</strong>, <strong>Pickup</strong>, <strong>Online</strong>, <strong>Catering</strong>)
+          so cooks see human-readable badges on the kitchen display. Empty label → no badge for that channel.
+        </p>
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+          <button style={styles.btnSecondary} onClick={loadDiningGuids} disabled={diningGuidsLoading}>
+            {diningGuidsLoading ? 'Loading...' : 'Refresh distinct GUIDs'}
+          </button>
+          <span style={{ marginLeft: 'auto', color: `${BRAND.cream}80`, fontSize: '0.85rem' }}>
+            {guids.length} distinct GUIDs across {byStore.size} stores · last 30 days
+          </span>
+        </div>
+
+        {!diningGuids && (
+          <div style={{ padding: '40px', textAlign: 'center', color: `${BRAND.cream}80` }}>
+            {diningGuidsLoading ? 'Loading...' : 'Click refresh to load distinct GUIDs'}
+          </div>
+        )}
+
+        {diningGuids && guids.length === 0 && (
+          <div style={{ padding: '40px', textAlign: 'center', color: `${BRAND.cream}80` }}>
+            No GUID-based dining options observed in the last 30 days.
+          </div>
+        )}
+
+        {[...byStore.entries()].map(([storeSlug, rows]) => {
+          const storeName = (STORE_OPTIONS.find((s) => s.slug === storeSlug) || {}).name || storeSlug;
+          const totalN = rows.reduce((s, r) => s + r.n, 0);
+          return (
+            <div key={storeSlug} style={{ marginBottom: '24px' }}>
+              <div style={{
+                fontFamily: "'Oswald', sans-serif",
+                fontWeight: 700,
+                letterSpacing: '2px',
+                textTransform: 'uppercase',
+                fontSize: '0.9rem',
+                color: BRAND.gold,
+                marginBottom: '8px',
+              }}>
+                {storeName} <span style={{ color: `${BRAND.cream}80`, fontWeight: 400 }}>· {rows.length} GUIDs · {totalN} orders</span>
+              </div>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>GUID</th>
+                    <th style={styles.th}>Last seen</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>Orders</th>
+                    <th style={styles.th}>Label</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => {
+                    const liveLabel = labels?.[storeSlug]?.[row.guid] ?? row.current_label ?? '';
+                    return (
+                      <tr key={row.guid}>
+                        <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: '0.75rem', color: `${BRAND.cream}cc` }}>{row.guid.slice(0, 8)}…</td>
+                        <td style={styles.td}>{row.last_seen ? new Date(row.last_seen).toLocaleDateString() : '—'}</td>
+                        <td style={{ ...styles.td, textAlign: 'right' }}>{row.n}</td>
+                        <td style={styles.td}>
+                          <input
+                            type="text"
+                            placeholder="e.g. Dine In"
+                            style={{ ...styles.input, marginBottom: 0, width: '200px' }}
+                            value={liveLabel}
+                            onChange={(e) => updateLabel(storeSlug, row.guid, e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+
+        <div style={{ background: `${BRAND.gold}10`, borderLeft: `3px solid ${BRAND.gold}`, padding: '10px 14px', borderRadius: '4px', marginTop: '16px', fontSize: '0.85rem', color: BRAND.cream }}>
+          Labels take effect for <strong>future</strong> orders only — the webhook resolves the GUID at write time. Older rows in <code>lc_orders</code> keep their raw dining_option (display now correctly suppresses the badge for those).
+        </div>
+      </div>
+    );
+  }
+
   function renderMaintenanceTab() {
     const m = maintStats;
     return (
@@ -2045,7 +2173,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     );
   }
 
-  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Hold Times': renderHoldTimesTab, 'Service Hours': renderServiceHoursTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, 'Shift Summary': renderShiftSummaryTab, 'Item Performance': renderItemPerfTab, Maintenance: renderMaintenanceTab };
+  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Hold Times': renderHoldTimesTab, 'Service Hours': renderServiceHoursTab, 'Dining Options': renderDiningOptionsTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, 'Shift Summary': renderShiftSummaryTab, 'Item Performance': renderItemPerfTab, Maintenance: renderMaintenanceTab };
 
   return (
     <div style={styles.container}>

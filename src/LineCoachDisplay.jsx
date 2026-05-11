@@ -929,7 +929,18 @@ export default function LineCoachDisplay({ storeId }) {
           items,
           sides: order.sides || [],
           notes: order.notes || null,
-          diningOption: order.dining_option || null,
+          // Guard: older rows + Toast variants we haven't mapped store
+          // dining_option as a raw JSON object string like
+          // {"guid":"...","entityType":"DiningOption"}. Never render
+          // that to a cook — drop to null so the badge is suppressed.
+          // The admin's Dining Options tab surfaces these GUIDs so
+          // they can be labeled going forward (webhook then resolves
+          // the GUID to "DINE IN" / "TAKEOUT" / etc. at write time).
+          diningOption: (typeof order.dining_option === 'string'
+                          && order.dining_option.length > 0
+                          && !order.dining_option.startsWith('{'))
+                        ? order.dining_option
+                        : null,
           orderChannel: order.order_channel || null,
           priority: order.priority || 'normal',
           priorityRank: order.priority_rank || 30,

@@ -51,6 +51,34 @@ function diningOptionToString(opt) {
   return String(opt);
 }
 
+// Extract the GUID from a Toast dining_option object, if any.
+// Returns null when there's no GUID to resolve.
+function diningOptionGuid(opt) {
+  if (opt && typeof opt === 'object' && typeof opt.guid === 'string' && opt.guid.length > 0) {
+    return opt.guid;
+  }
+  return null;
+}
+
+// Resolve a Toast dining_option into a human-readable label. Tries
+// in order:
+//   1. Any plain string already on the object (Toast sometimes sends
+//      .name; happily use it)
+//   2. The admin-configured GUID → label map for this store
+//   3. null — caller decides whether to store the raw GUID or skip
+// Storing null when we can't resolve is honest: the display knows
+// not to render a badge, and the admin's Dining Options tab will
+// surface the unmapped GUID so it can be labeled going forward.
+function resolveDiningLabel(opt, storeId, labelMap) {
+  const direct = diningOptionToString(opt);
+  if (direct && !direct.startsWith('{')) return direct;
+  const guid = diningOptionGuid(opt);
+  if (guid && labelMap && labelMap[storeId] && labelMap[storeId][guid]) {
+    return labelMap[storeId][guid];
+  }
+  return null;
+}
+
 function computePriorityRank(isRush, diningOption) {
   if (isRush) return 10;
   const opt = diningOptionToString(diningOption).toLowerCase();
@@ -258,8 +286,13 @@ export async function POST(request) {
     // store. We still log to lc_webhook_log so the admin can see what
     // got dropped. Returns 200 so Toast doesn't retry the dropped
     // webhook into a tight loop.
+    // Brand config is loaded here once and reused below for both the
+    // service-hours guard and the dining-option GUID resolution. The
+    // 60s in-memory cache in lib/line-coach.js means this is cheap.
+    let storeCfg = null;
     try {
-      const { data: storeCfg } = await getConfig(storeId);
+      const cfgRes = await getConfig(storeId);
+      storeCfg = cfgRes?.data || null;
       const hoursMap = storeCfg?.service_hours || {};
       if (!isWithinServiceWindow(hoursMap, storeId)) {
         logWebhook({
@@ -427,8 +460,15 @@ export async function POST(request) {
     const deduplicatedSides = Object.values(sideMap);
 
     diningOption = diningOption || toastOrder.diningOption || toastOrder.serviceType || null;
-    // Normalize to a string — Toast may send an object { guid, entityType, name? }.
-    const diningOptionStr = diningOptionToString(diningOption) || null;
+    // Resolve the dining option to a human label. Order of attempts:
+    //   1. Plain string Toast already gave us ("Dine In", "Takeout")
+    //   2. Admin-configured GUID → label map for this store
+    //   3. null — display will skip the badge, admin's Dining Options
+    //      tab will surface the unmapped GUID so it can be labeled.
+    // Storing null is honest; storing the raw GUID JSON would leak
+    // a useless string into the UI as it has historically.
+    const diningLabelMap = storeCfg?.dining_option_labels || {};
+    const diningOptionStr = resolveDiningLabel(diningOption, storeId, diningLabelMap);
     if (!customerName && toastOrder.customer) {
       customerName = [toastOrder.customer.firstName, toastOrder.customer.lastName].filter(Boolean).join(' ')
         || toastOrder.customer.name;
