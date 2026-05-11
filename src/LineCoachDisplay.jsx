@@ -227,6 +227,34 @@ export default function LineCoachDisplay({ storeId }) {
     });
   }
 
+  // Shift counter for Quality Coach mode (slow period only). Fetches
+  // today's stats once when the kitchen goes quiet, then every 5 min
+  // while it stays quiet. Pauses during active service so we don't
+  // hammer the analytics path during rush. Honest about cost: this
+  // is one HTTP call per 5 min per kiosk, only when there are zero
+  // orders — negligible.
+  const [shiftStats, setShiftStats] = useState(null);
+  useEffect(() => {
+    // Only fetch when the kitchen is empty. orders.length is the raw
+    // count from realtime, which matches what the slow-period gate
+    // uses downstream.
+    if (orders.length > 0) return undefined;
+    let cancelled = false;
+    async function fetchStats() {
+      try {
+        const res = await fetch('/api/line-coach/analytics/today');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const row = (data.stores || []).find((s) => s.store_id === storeId);
+        if (row) setShiftStats(row);
+      } catch { /* keep last good value */ }
+    }
+    fetchStats();
+    const interval = setInterval(fetchStats, 5 * 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [orders.length, storeId]);
+
   useEffect(() => {
     if (supabaseUrl && supabaseAnonKey) {
       supabaseRef.current = createClient(supabaseUrl, supabaseAnonKey);
@@ -906,6 +934,19 @@ export default function LineCoachDisplay({ storeId }) {
     const tipStyle = language === 'es'
       ? { ...s.qualityTipEs, fontStyle: 'italic' }
       : s.qualityTipEn;
+    // Shift counter — only renders when we have non-trivial today
+    // data. Empty / failed fetch → skip the pill entirely so the
+    // slow-period view doesn't grow chrome that's empty. Numbers
+    // read across languages; the only translated string is the
+    // "Today · " / "Hoy · " prefix.
+    const stats = shiftStats;
+    const showShiftPill = stats && stats.tickets > 0;
+    const onTimePct = stats && stats.tickets > 0
+      ? Math.round(100 - (stats.over_sla_pct || 0))
+      : null;
+    const prefix = language === 'es' ? 'Hoy' : 'Today';
+    const avgLabel = language === 'es' ? 'prom' : 'avg';
+    const onTimeLabel = language === 'es' ? 'a tiempo' : 'on time';
     return (
       <div style={s.container}>
         <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
@@ -919,6 +960,42 @@ export default function LineCoachDisplay({ storeId }) {
               </div>
             )}
           </div>
+          {showShiftPill && (
+            <div style={{
+              marginTop: 'clamp(2vh, 3vh, 5vh)',
+              padding: '12px 24px',
+              borderRadius: '999px',
+              background: `${BRAND.gold}12`,
+              border: `1px solid ${BRAND.gold}30`,
+              color: BRAND.cream,
+              fontFamily: "'Oswald', sans-serif",
+              fontSize: 'clamp(0.9rem, 1.3vw, 1.3rem)',
+              fontWeight: 600,
+              letterSpacing: '2.5px',
+              textTransform: 'uppercase',
+              display: 'flex',
+              gap: '16px',
+              alignItems: 'center',
+            }}>
+              <span style={{ color: BRAND.gold }}>{prefix}</span>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span>{stats.tickets} {stats.tickets === 1 ? 'order' : 'orders'}</span>
+              {stats.avg_seconds != null && (
+                <>
+                  <span style={{ opacity: 0.4 }}>·</span>
+                  <span>{avgLabel} {Math.floor(stats.avg_seconds / 60)}m {String(stats.avg_seconds % 60).padStart(2, '0')}s</span>
+                </>
+              )}
+              {onTimePct != null && (
+                <>
+                  <span style={{ opacity: 0.4 }}>·</span>
+                  <span style={{ color: onTimePct >= 95 ? BRAND.green : onTimePct >= 85 ? BRAND.gold : BRAND.red }}>
+                    {onTimePct}% {onTimeLabel}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
