@@ -163,7 +163,7 @@ const styles = {
   deviceOffline: { color: `${BRAND.cream}60`, fontSize: '0.8rem' },
 };
 
-const TABS = ['Menu', 'Sides', 'Tips', 'Hold Times', 'Service Hours', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Maintenance'];
+const TABS = ['Menu', 'Sides', 'Tips', 'Hold Times', 'Service Hours', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Shift Summary', 'Item Performance', 'Maintenance'];
 
 const ALLOWED_STATIONS = ['oven', 'grill', 'fryer', 'line', 'cold', 'hot_hold', 'grab'];
 
@@ -464,7 +464,9 @@ const STORE_OPTIONS = [
 // (Webhooks is intentionally NOT here — the integration health banner
 // is brand-wide and the log filter accepts a missing store as
 // "all stores", which is useful for checking Toast routing.)
-const PER_STORE_TABS = new Set(['Settings', 'Devices', 'Analytics']);
+// Shift Summary is per-store (date + store); Item Performance is
+// brand-wide (it has its own all-stores / specific-store toggle).
+const PER_STORE_TABS = new Set(['Settings', 'Devices', 'Analytics', 'Shift Summary']);
 
 export default function LineCoachAdmin({ storeId: initialStoreId }) {
   // storeId is now LOCAL state, hydrated from the URL prop. The header
@@ -492,6 +494,20 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   // reference bands at 8/10/12 min stay readable.
   const [ticketTimes, setTicketTimes] = useState(null);
   const [ticketTimesLoading, setTicketTimesLoading] = useState(false);
+  // Shift Summary tab state. daysAgo defaults to 1 (yesterday) — the
+  // most common "what happened during service" question. shiftSummary
+  // holds the API response. shiftSummaryLoading drives the refresh
+  // button's disabled state.
+  const [shiftSummaryDaysAgo, setShiftSummaryDaysAgo] = useState(1);
+  const [shiftSummary, setShiftSummary] = useState(null);
+  const [shiftSummaryLoading, setShiftSummaryLoading] = useState(false);
+  // Item Performance tab state. days window defaults to 30 for stable
+  // percentiles. itemPerfStoreFilter holds the optional store slug;
+  // empty string means brand-wide aggregation.
+  const [itemPerfDays, setItemPerfDays] = useState(30);
+  const [itemPerfStoreFilter, setItemPerfStoreFilter] = useState('');
+  const [itemPerf, setItemPerf] = useState(null);
+  const [itemPerfLoading, setItemPerfLoading] = useState(false);
   const [maintStats, setMaintStats] = useState(null);
   const [maintMsg, setMaintMsg] = useState('');
   const [maintBusy, setMaintBusy] = useState(false);
@@ -643,6 +659,37 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     setMaintBusy(false);
   }, [token]);
 
+  const loadShiftSummary = useCallback(async () => {
+    if (!storeId) {
+      setShiftSummary(null);
+      return;
+    }
+    setShiftSummaryLoading(true);
+    try {
+      const res = await fetch(
+        `/api/line-coach/analytics/shift-summary?store=${storeId}&days_ago=${shiftSummaryDaysAgo}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (res.ok) setShiftSummary(await res.json());
+      else setShiftSummary(null);
+    } catch { setShiftSummary(null); }
+    setShiftSummaryLoading(false);
+  }, [token, storeId, shiftSummaryDaysAgo]);
+
+  const loadItemPerf = useCallback(async () => {
+    setItemPerfLoading(true);
+    try {
+      const qs = new URLSearchParams({ days: String(itemPerfDays) });
+      if (itemPerfStoreFilter) qs.set('store', itemPerfStoreFilter);
+      const res = await fetch(`/api/line-coach/analytics/item-performance?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setItemPerf(await res.json());
+      else setItemPerf(null);
+    } catch { setItemPerf(null); }
+    setItemPerfLoading(false);
+  }, [token, itemPerfDays, itemPerfStoreFilter]);
+
   async function runMaintenance(action, days) {
     setMaintMsg('');
     setMaintBusy(true);
@@ -668,8 +715,10 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   useEffect(() => {
     if (token && activeTab === 'Webhooks') { loadWebhookLogs(); loadHealth(); }
     if (token && activeTab === 'Analytics') { loadAnalytics(); loadTicketTimes(); }
+    if (token && activeTab === 'Shift Summary') loadShiftSummary();
+    if (token && activeTab === 'Item Performance') loadItemPerf();
     if (token && activeTab === 'Maintenance') loadMaintenance();
-  }, [token, activeTab, loadWebhookLogs, loadHealth, loadAnalytics, loadTicketTimes, loadMaintenance]);
+  }, [token, activeTab, loadWebhookLogs, loadHealth, loadAnalytics, loadTicketTimes, loadShiftSummary, loadItemPerf, loadMaintenance]);
 
   function importCsvFor(key, validator) {
     return (e) => {
@@ -1682,6 +1731,260 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     );
   }
 
+  function renderShiftSummaryTab() {
+    const s = shiftSummary;
+    const recap = s?.recap;
+    // Compute the picked date label in LA tz from days_ago.
+    const pickedLabel = (() => {
+      if (!s) return '';
+      const target = new Date(Date.now() - s.days_ago * 24 * 3600_000);
+      try {
+        return new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/Los_Angeles',
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        }).format(target);
+      } catch {
+        return target.toISOString().slice(0, 10);
+      }
+    })();
+    return (
+      <div style={styles.panel}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+          <button
+            style={styles.btnSecondary}
+            onClick={() => setShiftSummaryDaysAgo((d) => Math.min(90, d + 1))}
+            disabled={shiftSummaryLoading}
+          >← Earlier day</button>
+          <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", letterSpacing: '2px', textTransform: 'uppercase', fontSize: '0.95rem', minWidth: '220px', textAlign: 'center' }}>
+            {pickedLabel || (shiftSummaryDaysAgo === 0 ? 'Today' : shiftSummaryDaysAgo === 1 ? 'Yesterday' : `${shiftSummaryDaysAgo} days ago`)}
+          </div>
+          <button
+            style={styles.btnSecondary}
+            onClick={() => setShiftSummaryDaysAgo((d) => Math.max(0, d - 1))}
+            disabled={shiftSummaryLoading || shiftSummaryDaysAgo === 0}
+          >Later day →</button>
+          <button style={styles.btnSecondary} onClick={loadShiftSummary} disabled={shiftSummaryLoading}>
+            {shiftSummaryLoading ? 'Loading...' : 'Refresh'}
+          </button>
+          <span style={{ marginLeft: 'auto', color: `${BRAND.cream}80`, fontSize: '0.85rem' }}>Store: {storeId}</span>
+        </div>
+
+        {!s && (
+          <div style={{ padding: '40px', textAlign: 'center', color: `${BRAND.cream}80` }}>
+            {shiftSummaryLoading ? 'Loading...' : 'No data'}
+          </div>
+        )}
+
+        {s && recap && (
+          <>
+            {/* Vitals */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+              {[
+                { label: 'Tickets', value: recap.tickets ?? 0 },
+                { label: 'Avg', value: fmtDuration(recap.avg_seconds) },
+                { label: 'p90', value: fmtDuration(recap.p90_seconds) },
+                { label: 'Over-SLA', value: `${recap.over_sla ?? 0} (${(recap.over_sla_pct ?? 0).toFixed(1)}%)`, warn: (recap.over_sla_pct ?? 0) > 5 },
+                { label: 'Cleanup-bumped', value: recap.cleanup_bumped ?? 0, muted: true },
+              ].map((k) => (
+                <div key={k.label} style={{ background: BRAND.charcoal, padding: '14px', borderRadius: '8px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.7rem', color: `${BRAND.cream}80`, fontFamily: "'Oswald', sans-serif", letterSpacing: '1.5px', textTransform: 'uppercase' }}>{k.label}</div>
+                  <div style={{ fontSize: '1.6rem', color: k.warn ? BRAND.red : (k.muted ? `${BRAND.cream}80` : BRAND.gold), fontFamily: "'Oswald', sans-serif", marginTop: '4px' }}>{k.value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Anomalies */}
+            {Array.isArray(recap.anomalies) && recap.anomalies.length > 0 && (
+              <div style={{ marginBottom: '24px' }}>
+                <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", letterSpacing: '1.5px', textTransform: 'uppercase', fontSize: '0.85rem', marginBottom: '8px' }}>
+                  ⚠️ Demand anomalies (vs 14-day avg)
+                </div>
+                <table style={styles.table}>
+                  <thead><tr><th style={styles.th}>Side</th><th style={styles.th}>Today</th><th style={styles.th}>vs avg</th><th style={styles.th}>14-day avg</th></tr></thead>
+                  <tbody>
+                    {recap.anomalies.map((a) => (
+                      <tr key={a.name}>
+                        <td style={styles.td}>{a.name}</td>
+                        <td style={styles.td}>{a.count}</td>
+                        <td style={{ ...styles.td, color: a.anomaly_flag === 'high' ? BRAND.red : BRAND.gold }}>
+                          {a.anomaly_flag === 'high' ? '↑' : '↓'} {a.pct_vs_avg != null ? `${a.pct_vs_avg}%` : '—'}
+                        </td>
+                        <td style={styles.td}>{a.avg_14d ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Top items + sides side-by-side */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+              {Array.isArray(recap.top_entrees) && recap.top_entrees.length > 0 && (
+                <div>
+                  <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", letterSpacing: '1.5px', textTransform: 'uppercase', fontSize: '0.85rem', marginBottom: '8px' }}>Top entrees</div>
+                  <table style={styles.table}>
+                    <thead><tr><th style={styles.th}>Item</th><th style={styles.th}>Count</th></tr></thead>
+                    <tbody>
+                      {recap.top_entrees.map((e) => (
+                        <tr key={e.name}><td style={styles.td}>{e.name}</td><td style={{ ...styles.td, textAlign: 'right' }}>{e.count}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {Array.isArray(recap.top_sides) && recap.top_sides.length > 0 && (
+                <div>
+                  <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", letterSpacing: '1.5px', textTransform: 'uppercase', fontSize: '0.85rem', marginBottom: '8px' }}>Top sides</div>
+                  <table style={styles.table}>
+                    <thead><tr><th style={styles.th}>Side</th><th style={styles.th}>Count</th></tr></thead>
+                    <tbody>
+                      {recap.top_sides.map((sd) => (
+                        <tr key={sd.name}><td style={styles.td}>{sd.name}</td><td style={{ ...styles.td, textAlign: 'right' }}>{sd.count}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Webhook log section */}
+            <div>
+              <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", letterSpacing: '1.5px', textTransform: 'uppercase', fontSize: '0.85rem', marginBottom: '8px' }}>
+                Webhook log {!s.webhook_log_available && <span style={{ color: `${BRAND.cream}60`, textTransform: 'none', letterSpacing: '0.5px', marginLeft: '8px' }}>— only available for the last 30 days</span>}
+              </div>
+              {s.webhook_log_available && (s.webhook_log || []).length === 0 && (
+                <div style={{ color: `${BRAND.cream}60`, padding: '12px' }}>No webhook events recorded for this day.</div>
+              )}
+              {(s.webhook_log || []).length > 0 && (
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Time</th>
+                      <th style={styles.th}>Status</th>
+                      <th style={styles.th}>Event</th>
+                      <th style={styles.th}>Order #</th>
+                      <th style={styles.th}>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.webhook_log.map((log) => (
+                      <tr key={log.id}>
+                        <td style={styles.td}>{new Date(log.created_at).toLocaleString()}</td>
+                        <td style={{ ...styles.td, color: WEBHOOK_STATUS_COLOR[log.status] || BRAND.cream }}>{log.status}</td>
+                        <td style={styles.td}>{log.event_type || '—'}</td>
+                        <td style={styles.td}>{log.toast_order_id ? log.toast_order_id.slice(0, 8) : '—'}</td>
+                        <td style={{ ...styles.td, color: BRAND.red, fontSize: '0.85rem' }}>{log.error_message || ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  function renderItemPerfTab() {
+    const ip = itemPerf;
+    const items = ip?.items || [];
+    const slaBreachMin = (config?.hold_times?.sla_breach_minutes) ?? 10;
+    const slaBreachSec = slaBreachMin * 60;
+    return (
+      <div style={styles.panel}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+          <div style={{ color: BRAND.cream }}>Window:</div>
+          <select style={{ ...styles.input, marginBottom: 0, width: 'auto' }} value={itemPerfDays}
+            onChange={(e) => setItemPerfDays(parseInt(e.target.value, 10))}>
+            <option value={7}>7 days</option>
+            <option value={30}>30 days</option>
+            <option value={90}>90 days</option>
+          </select>
+          <div style={{ color: BRAND.cream, marginLeft: '12px' }}>Store:</div>
+          <select style={{ ...styles.input, marginBottom: 0, width: 'auto' }} value={itemPerfStoreFilter}
+            onChange={(e) => setItemPerfStoreFilter(e.target.value)}>
+            <option value="">All stores</option>
+            {STORE_OPTIONS.map((s) => <option key={s.slug} value={s.slug}>{s.name}</option>)}
+          </select>
+          <button style={styles.btnSecondary} onClick={loadItemPerf} disabled={itemPerfLoading}>
+            {itemPerfLoading ? 'Loading...' : 'Refresh'}
+          </button>
+          <span style={{ marginLeft: 'auto', color: `${BRAND.cream}80`, fontSize: '0.85rem' }}>
+            {items.length} items
+          </span>
+        </div>
+
+        <div style={{ background: `${BRAND.gold}10`, borderLeft: `3px solid ${BRAND.gold}`, padding: '10px 14px', borderRadius: '4px', marginBottom: '16px', fontSize: '0.85rem', color: BRAND.cream }}>
+          <strong>Note:</strong> Times shown are the <em>whole-ticket time</em> attributed to every item on that ticket — so a Quarter Bird&apos;s p90 means &quot;p90 of tickets that included a Quarter Bird&quot;, not &quot;the bird itself took that long.&quot; Useful for spotting which dishes correlate with slow tickets, not for plating-level precision.
+        </div>
+
+        {!ip && (
+          <div style={{ padding: '40px', textAlign: 'center', color: `${BRAND.cream}80` }}>
+            {itemPerfLoading ? 'Loading...' : 'No data'}
+          </div>
+        )}
+
+        {ip && items.length === 0 && (
+          <div style={{ padding: '40px', textAlign: 'center', color: `${BRAND.cream}80` }}>
+            No bumped orders in this window
+          </div>
+        )}
+
+        {ip && items.length > 0 && (
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Item</th>
+                <th style={styles.th}>Station</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>n</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>avg</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>p50</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>p90</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>p99</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => {
+                const breaching = it.p90 != null && it.p90 > slaBreachSec;
+                return (
+                  <tr key={it.name} style={breaching ? { background: `${BRAND.red}15` } : {}}>
+                    <td style={styles.td}>{it.name}</td>
+                    <td style={styles.td}>
+                      {it.station && (
+                        <span style={{
+                          fontSize: '0.7rem',
+                          fontFamily: "'Oswald', sans-serif",
+                          fontWeight: 700,
+                          letterSpacing: '1.5px',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          background: `${BRAND.charcoalDark}`,
+                          color: BRAND.cream,
+                          border: `1px solid ${BRAND.cream}40`,
+                        }}>{it.station.toUpperCase()}</span>
+                      )}
+                    </td>
+                    <td style={{ ...styles.td, textAlign: 'right' }}>{it.n}</td>
+                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtDuration(it.avg)}</td>
+                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtDuration(it.p50)}</td>
+                    <td style={{ ...styles.td, textAlign: 'right', color: breaching ? BRAND.red : BRAND.bone, fontWeight: breaching ? 700 : 400 }}>
+                      {fmtDuration(it.p90)}{breaching ? ' ⚠️' : ''}
+                    </td>
+                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtDuration(it.p99)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  }
+
   function renderMaintenanceTab() {
     const m = maintStats;
     return (
@@ -1742,7 +2045,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     );
   }
 
-  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Hold Times': renderHoldTimesTab, 'Service Hours': renderServiceHoursTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, Maintenance: renderMaintenanceTab };
+  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Hold Times': renderHoldTimesTab, 'Service Hours': renderServiceHoursTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, 'Shift Summary': renderShiftSummaryTab, 'Item Performance': renderItemPerfTab, Maintenance: renderMaintenanceTab };
 
   return (
     <div style={styles.container}>
