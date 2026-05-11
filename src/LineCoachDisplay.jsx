@@ -53,6 +53,40 @@ const BRAND = {
   sage: '#A8B5A0',
 };
 
+// Per-station color palette for the routing badges on each item.
+// Lets a cook on a specific station scan a column of cards and find
+// what's theirs without parsing item names. Stations come from
+// brand_config.menu_items[].station — only items configured there
+// get a badge. Toast variants we haven't mapped silently render no
+// badge (better than confidently labeling them wrong).
+const STATION_STYLES = {
+  oven:     { background: `${BRAND.cream}30`,      color: BRAND.cream,      border: `1px solid ${BRAND.cream}55` },
+  grill:    { background: `${BRAND.terracotta}30`, color: BRAND.terracotta, border: `1px solid ${BRAND.terracotta}55` },
+  fryer:    { background: `${BRAND.gold}30`,       color: BRAND.gold,       border: `1px solid ${BRAND.gold}55` },
+  line:     { background: `${BRAND.blue}30`,       color: '#9CC4D2',        border: `1px solid ${BRAND.blue}55` },
+  cold:     { background: 'transparent',           color: BRAND.bone,       border: `1px solid ${BRAND.bone}55` },
+  hot_hold: { background: `${BRAND.cream}20`,      color: BRAND.cream,      border: `1px solid ${BRAND.cream}40` },
+  grab:     { background: 'transparent',           color: `${BRAND.cream}80`, border: `1px solid ${BRAND.cream}40` },
+};
+
+const STATION_LABELS = {
+  oven: 'OVEN',
+  grill: 'GRILL',
+  fryer: 'FRYER',
+  line: 'LINE',
+  cold: 'COLD',
+  hot_hold: 'HOT HOLD',
+  grab: 'GRAB',
+};
+
+// Pull the station for an item by exact-name lookup. Returns null when
+// the item isn't in brand config so the renderer can skip the badge.
+function stationFor(itemName, menuItems) {
+  if (!itemName) return null;
+  const m = (menuItems || []).find((mi) => mi?.name === itemName);
+  return m?.station || null;
+}
+
 // Detect allergy / dietary callouts in order notes. Returns the cleaned
 // text to highlight (or null when the note isn't allergy-related).
 // Trigger words are intentionally broad — a false positive (e.g. "no
@@ -1587,7 +1621,15 @@ export default function LineCoachDisplay({ storeId }) {
                           padding: '0 12px',
                           gap: '2px',
                         }}>
-                          {order.items.map((item, ii) => (
+                          {order.items.map((item, ii) => {
+                            // Station routing badge — color-coded pill from
+                            // STATION_STYLES, only rendered when the item is
+                            // in brand config (Toast variants we haven't
+                            // mapped silently render nothing).
+                            const station = stationFor(item.name, menuItems);
+                            const stationStyle = station ? STATION_STYLES[station] : null;
+                            const stationLabel = station ? STATION_LABELS[station] : null;
+                            return (
                             <div key={ii} style={{
                               display: 'flex',
                               alignItems: 'center',
@@ -1606,6 +1648,19 @@ export default function LineCoachDisplay({ storeId }) {
                                 }}
                                 onError={(e) => { e.target.style.display = 'none'; }}
                               />
+                              {stationStyle && stationLabel && (
+                                <div style={{
+                                  ...stationStyle,
+                                  fontFamily: "'Oswald', sans-serif",
+                                  fontWeight: 700,
+                                  fontSize: isComfortable ? '0.8rem' : '0.65rem',
+                                  letterSpacing: '1.5px',
+                                  padding: isComfortable ? '4px 8px' : '2px 6px',
+                                  borderRadius: '4px',
+                                  flexShrink: 0,
+                                  whiteSpace: 'nowrap',
+                                }}>{stationLabel}</div>
+                              )}
                               <div style={{
                                 fontSize: entreeNameSize,
                                 fontWeight: 700,
@@ -1638,7 +1693,8 @@ export default function LineCoachDisplay({ storeId }) {
                                 }}>{item.modifiers.join(' · ')}</div>
                               )}
                             </div>
-                          ))}
+                            );
+                          })}
                           {(sidesText || inlineNote) && (
                             <div style={{
                               fontSize: sidesLineSize,
@@ -2038,6 +2094,9 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
             const coachTip = menuMatch?.coach_tip
               ? normalizeTip(menuMatch.coach_tip)
               : null;
+            const station = menuMatch?.station || null;
+            const stationStyle = station ? STATION_STYLES[station] : null;
+            const stationLabel = station ? STATION_LABELS[station] : null;
             return (
               <div key={ii} style={{
                 display: 'flex',
@@ -2059,16 +2118,30 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                   onError={(e) => { e.target.style.display = 'none'; }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontFamily: "'Oswald', sans-serif",
-                    fontWeight: 700,
-                    fontSize: '1.6rem',
-                    textTransform: 'uppercase',
-                    color: BRAND.bone,
-                    lineHeight: 1.1,
-                  }}>
-                    {item.quantity > 1 && <span style={{ color: BRAND.gold, marginRight: '8px' }}>{item.quantity}x</span>}
-                    {item.name}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    {stationStyle && stationLabel && (
+                      <div style={{
+                        ...stationStyle,
+                        fontFamily: "'Oswald', sans-serif",
+                        fontWeight: 700,
+                        fontSize: '0.75rem',
+                        letterSpacing: '1.5px',
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        flexShrink: 0,
+                      }}>{stationLabel}</div>
+                    )}
+                    <div style={{
+                      fontFamily: "'Oswald', sans-serif",
+                      fontWeight: 700,
+                      fontSize: '1.6rem',
+                      textTransform: 'uppercase',
+                      color: BRAND.bone,
+                      lineHeight: 1.1,
+                    }}>
+                      {item.quantity > 1 && <span style={{ color: BRAND.gold, marginRight: '8px' }}>{item.quantity}x</span>}
+                      {item.name}
+                    </div>
                   </div>
                   {item.modifiers?.length > 0 && (
                     <div style={{
