@@ -1466,18 +1466,22 @@ export default function LineCoachDisplay({ storeId }) {
               const MAX_VISIBLE = isComfortable ? 3 : 6;
               const visibleOrders = orderSequence.slice(0, MAX_VISIBLE);
               const hiddenCount = orderSequence.length - MAX_VISIBLE;
-              // Density-driven sizes (in px / rem). Rush values were
-              // bumped for touch ergonomics (sidebar 80→96, photo
-              // 48→60, padding 6→10) so every card is a confident tap
-              // target on the 22" wall-mounted touchscreen.
+              // Density-driven sizes (in px / rem). Hollywood post-deploy
+              // bump (May 2026): every primary size raised so the
+              // wall-mounted TV reads cleanly from the prep / pass
+              // sides of the line, not just from the cook's station.
+              // Rush mode gets the biggest jump because that's when
+              // the display matters most and cooks are furthest from
+              // it. Comfortable mode lifted proportionally so the two
+              // tiers still feel related.
               const rowPad = isComfortable ? '14px 0' : '10px 0';
-              const sidebarW = isComfortable ? '110px' : '96px';
-              const orderNumSize = isComfortable ? '1.4rem' : '1rem';
-              const customerSize = isComfortable ? '0.95rem' : '0.7rem';
-              const badgeSize = isComfortable ? '0.85rem' : '0.65rem';
-              const timerSize = isComfortable ? '1.6rem' : '1.1rem';
-              const photoSize = isComfortable ? '110px' : '60px';
-              const entreeNameSize = isComfortable ? '2.2rem' : '1.5rem';
+              const sidebarW = isComfortable ? '130px' : '116px';
+              const orderNumSize = isComfortable ? '1.7rem' : '1.5rem';
+              const customerSize = isComfortable ? '1.1rem' : '0.95rem';
+              const badgeSize = isComfortable ? '1rem' : '0.85rem';
+              const timerSize = isComfortable ? '2rem' : '1.7rem';
+              const photoSize = isComfortable ? '124px' : '76px';
+              const entreeNameSize = isComfortable ? '2.55rem' : '1.95rem';
               // Modifier + sides line are now BIGGER than the entree
               // name in rush mode and matched-or-larger in comfortable.
               // Cooks identify the dish from the photo first; the
@@ -1485,9 +1489,9 @@ export default function LineCoachDisplay({ storeId }) {
               // w/ Spanish Rice + Kale Slaw" detail is what they
               // actually need to read from across the line. Quality
               // accuracy depends on these being legible at distance.
-              const modifierSize = isComfortable ? '2.1rem' : '1.7rem';
-              const sidesLineSize = isComfortable ? '2.1rem' : '1.7rem';
-              const sidesIndent = isComfortable ? '124px' : '58px';
+              const modifierSize = isComfortable ? '2.5rem' : '2.2rem';
+              const sidesLineSize = isComfortable ? '2.5rem' : '2.2rem';
+              const sidesIndent = isComfortable ? '140px' : '88px';
 
               return (
                 <>
@@ -1640,8 +1644,8 @@ export default function LineCoachDisplay({ storeId }) {
                           fontWeight: 700,
                           letterSpacing: '2px',
                           textTransform: 'uppercase',
-                          fontSize: isComfortable ? '1.8rem' : '1.5rem',
-                          padding: isComfortable ? '12px 20px' : '8px 16px',
+                          fontSize: isComfortable ? '2.1rem' : '1.8rem',
+                          padding: isComfortable ? '14px 22px' : '10px 18px',
                           marginBottom: '6px',
                           borderRadius: '4px',
                           display: 'flex',
@@ -1790,9 +1794,9 @@ export default function LineCoachDisplay({ storeId }) {
                                   ...stationStyle,
                                   fontFamily: "'Oswald', sans-serif",
                                   fontWeight: 700,
-                                  fontSize: isComfortable ? '0.8rem' : '0.65rem',
+                                  fontSize: isComfortable ? '1rem' : '0.85rem',
                                   letterSpacing: '1.5px',
-                                  padding: isComfortable ? '4px 8px' : '2px 6px',
+                                  padding: isComfortable ? '5px 10px' : '3px 8px',
                                   borderRadius: '4px',
                                   flexShrink: 0,
                                   whiteSpace: 'nowrap',
@@ -1900,12 +1904,14 @@ export default function LineCoachDisplay({ storeId }) {
               // outside of render to avoid setTimeout-during-render).
               const isFlashing = flashSideRef.current.has(name);
 
-              // Dynamic sizing based on number of sides — compact for narrow column
+              // Dynamic sizing based on number of sides — compact for narrow column.
+              // Bumped post-Hollywood: name + count went up so the side-batch
+              // panel reads from the prep station, not just from arm's reach.
               const n = batchedSides.length;
               const imgSize = n <= 4 ? '7vh' : n <= 8 ? '5.5vh' : '4.5vh';
-              const nameSize = n <= 4 ? '1.5vh' : n <= 8 ? '1.3vh' : '1.1vh';
-              const countSize = n <= 4 ? '5vh' : n <= 8 ? '4vh' : '3vh';
-              const actionSize = n <= 4 ? '1.2vh' : n <= 8 ? '1vh' : '0.9vh';
+              const nameSize = n <= 4 ? '1.9vh' : n <= 8 ? '1.6vh' : '1.35vh';
+              const countSize = n <= 4 ? '5.8vh' : n <= 8 ? '4.6vh' : '3.6vh';
+              const actionSize = n <= 4 ? '1.4vh' : n <= 8 ? '1.2vh' : '1.05vh';
 
               return (
                 <div key={name} style={{
@@ -1929,7 +1935,7 @@ export default function LineCoachDisplay({ storeId }) {
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      fontSize: `clamp(1rem, ${nameSize}, 2rem)`,
+                      fontSize: `clamp(1.2rem, ${nameSize}, 2.4rem)`,
                       fontWeight: 700,
                       color: BRAND.bone,
                       fontFamily: "'Oswald', sans-serif",
@@ -1947,7 +1953,7 @@ export default function LineCoachDisplay({ storeId }) {
                         // minutes. We only show it when batches > 1
                         // since a single batch is the default mental
                         // model and doesn't need reinforcement.
-                        fontSize: `clamp(0.7rem, ${actionSize}, 1.1rem)`,
+                        fontSize: `clamp(0.85rem, ${actionSize}, 1.3rem)`,
                         fontWeight: 700,
                         color: BRAND.gold,
                         fontFamily: "'Oswald', sans-serif",
@@ -1962,7 +1968,7 @@ export default function LineCoachDisplay({ storeId }) {
                   <div
                     key={isFlashing ? `${name}-${count}` : name}
                     style={{
-                      fontSize: `clamp(2rem, ${countSize}, 6rem)`,
+                      fontSize: `clamp(2.4rem, ${countSize}, 7rem)`,
                       fontWeight: 700,
                       color: BRAND.gold,
                       fontFamily: "'Oswald', sans-serif",
@@ -2397,7 +2403,7 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle })
         <img
           src="/WILDBIRD-LOGO-WHITE.png"
           alt="WILDBIRD"
-          style={{ height: '36px', width: 'auto', display: 'block' }}
+          style={{ height: '44px', width: 'auto', display: 'block' }}
           onError={(e) => {
             e.currentTarget.style.display = 'none';
             const fallback = e.currentTarget.nextElementSibling;
@@ -2499,14 +2505,14 @@ const s = {
     letterSpacing: '2px',
   },
   ticketCount: {
-    fontSize: '1rem',
+    fontSize: '1.3rem',
     fontWeight: 700,
     color: BRAND.bone,
     fontFamily: "'Oswald', sans-serif",
     letterSpacing: '2px',
   },
   clock: {
-    fontSize: '1.1rem',
+    fontSize: '1.4rem',
     color: BRAND.cream,
     fontVariantNumeric: 'tabular-nums',
     fontFamily: "'Open Sans', sans-serif",
@@ -2514,10 +2520,10 @@ const s = {
   // Main Layout
   mainGrid: {
     display: 'grid',
-    gridTemplateColumns: '1fr 280px',
+    gridTemplateColumns: '1fr 320px',
     gap: '8px',
     padding: '8px',
-    height: 'calc(100vh - 50px)',
+    height: 'calc(100vh - 56px)',
     overflow: 'hidden',
   },
   leftCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
@@ -2530,12 +2536,12 @@ const s = {
   },
   // Side Batching
   sidesPanelHeader: {
-    fontSize: '0.85rem',
+    fontSize: '1.05rem',
     fontWeight: 700,
     color: BRAND.gold,
     fontFamily: "'Oswald', sans-serif",
     letterSpacing: '2px',
-    padding: '4px 2%',
+    padding: '6px 2%',
     flexShrink: 0,
   },
   sidesContainer: {
