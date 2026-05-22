@@ -1480,7 +1480,7 @@ export default function LineCoachDisplay({ storeId }) {
               const customerSize = isComfortable ? '1.1rem' : '0.95rem';
               const badgeSize = isComfortable ? '1rem' : '0.85rem';
               const timerSize = isComfortable ? '2rem' : '1.7rem';
-              const photoSize = isComfortable ? '124px' : '76px';
+              const photoSize = isComfortable ? '152px' : '104px';
               const entreeNameSize = isComfortable ? '2.55rem' : '1.95rem';
               // Modifier + sides line are now BIGGER than the entree
               // name in rush mode and matched-or-larger in comfortable.
@@ -1491,7 +1491,7 @@ export default function LineCoachDisplay({ storeId }) {
               // accuracy depends on these being legible at distance.
               const modifierSize = isComfortable ? '2.5rem' : '2.2rem';
               const sidesLineSize = isComfortable ? '2.5rem' : '2.2rem';
-              const sidesIndent = isComfortable ? '140px' : '88px';
+              const sidesIndent = isComfortable ? '168px' : '120px';
 
               return (
                 <>
@@ -1784,7 +1784,7 @@ export default function LineCoachDisplay({ storeId }) {
                                   width: photoSize,
                                   height: photoSize,
                                   objectFit: 'cover',
-                                  borderRadius: '50%',
+                                  borderRadius: '8px',
                                   flexShrink: 0,
                                 }}
                                 onError={(e) => { e.target.style.display = 'none'; }}
@@ -1908,7 +1908,7 @@ export default function LineCoachDisplay({ storeId }) {
               // Bumped post-Hollywood: name + count went up so the side-batch
               // panel reads from the prep station, not just from arm's reach.
               const n = batchedSides.length;
-              const imgSize = n <= 4 ? '7vh' : n <= 8 ? '5.5vh' : '4.5vh';
+              const imgSize = n <= 4 ? '9vh' : n <= 8 ? '7vh' : '5.5vh';
               const nameSize = n <= 4 ? '1.9vh' : n <= 8 ? '1.6vh' : '1.35vh';
               const countSize = n <= 4 ? '5.8vh' : n <= 8 ? '4.6vh' : '3.6vh';
               const actionSize = n <= 4 ? '1.4vh' : n <= 8 ? '1.2vh' : '1.05vh';
@@ -1928,7 +1928,7 @@ export default function LineCoachDisplay({ storeId }) {
                       width: imgSize,
                       height: imgSize,
                       objectFit: 'cover',
-                      borderRadius: '50%',
+                      borderRadius: '8px',
                       flexShrink: 0,
                     }}
                     onError={(e) => { e.target.style.display = 'none'; }}
@@ -2263,9 +2263,9 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                   src={getSideImageUrl(item.name, menuItems, configSides)}
                   alt={item.name}
                   style={{
-                    width: '88px',
-                    height: '88px',
-                    borderRadius: '50%',
+                    width: '120px',
+                    height: '120px',
+                    borderRadius: '10px',
                     objectFit: 'cover',
                     flexShrink: 0,
                   }}
