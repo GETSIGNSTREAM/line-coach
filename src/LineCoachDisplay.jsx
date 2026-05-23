@@ -149,6 +149,78 @@ function getSideImageUrl(name, configItems, configSides) {
   return `/sides/${slug}.jpg`;
 }
 
+// Classify a single Toast modifier string. Drives the modifier list's
+// visual hierarchy on every order surface:
+//   critical — deviations the customer asked for ("No Onions", "Sub
+//     Chicken", "Extra Salsa", "Light Sauce", "Without Garlic", "On the
+//     Side"). Missing one of these is what turns into a remade dish,
+//     so they render in gold so cooks lock on first.
+//   cosmetic — text that restates the menu default and adds noise
+//     without information ("Regular X", "Standard X", "Default", "No
+//     Modifications", "None"). Hidden entirely — they were the main
+//     reason long modifier strings dominated cards in Hollywood feedback.
+//   normal — a genuine selection that isn't a deviation (e.g. "Brown
+//     Rice", "Chipotle Aioli"). Still important to the cook, just not
+//     elevated above other modifiers.
+//
+// Regexes are intentionally verb-first / first-word matches so a
+// modifier like "Chipotle Sauce" doesn't get flagged critical just
+// because it contains the word "sauce". Order matters — cosmetic
+// patterns run first so "Regular No-Cheese" (unlikely but possible)
+// stays cosmetic rather than promoting to critical.
+function classifyModifier(text) {
+  if (!text || typeof text !== 'string') return 'cosmetic';
+  const t = text.trim();
+  if (!t) return 'cosmetic';
+  if (/^(?:no\s+modifications?|none|n\/a|default|standard)$/i.test(t)) return 'cosmetic';
+  if (/^(?:regular|standard|default)\s+\w/i.test(t)) return 'cosmetic';
+  if (/^(?:no|sub|substitute|swap|add|extra|light|heavy|without|hold|w\/o|w\/?out)\b/i.test(t)) return 'critical';
+  if (/^(?:on\s+the\s+side|side\s+of|side\s*[-–])\b/i.test(t)) return 'critical';
+  return 'normal';
+}
+
+// Filter + classify a raw modifier array. Returns an array of
+// { raw, kind } entries with cosmetic restate-default entries removed.
+// Shared by ModifierLines (cards / detail sheet / focus primary) and
+// the focus-mode secondary-items list (which still renders inline).
+function visibleModifiers(modifiers) {
+  return (modifiers || [])
+    .map((m) => ({ raw: typeof m === 'string' ? m : String(m ?? ''), kind: classifyModifier(m) }))
+    .filter((m) => m.kind !== 'cosmetic' && m.raw);
+}
+
+// Render a modifier list as one line per modifier with critical
+// deviations colored gold. Used by the rush + comfortable card, the
+// focus-mode hero, and the order detail sheet so every surface
+// presents modifiers with the same visual hierarchy.
+function ModifierLines({ modifiers, size, fontWeight = 700, fontFamily = "'Open Sans', sans-serif", normalColor = BRAND.white, criticalColor = BRAND.gold, gap = '2px', style = {} }) {
+  const list = visibleModifiers(modifiers);
+  if (list.length === 0) return null;
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      gap,
+      minWidth: 0,
+      ...style,
+    }}>
+      {list.map((m, i) => (
+        <div key={i} style={{
+          fontSize: size,
+          fontWeight,
+          color: m.kind === 'critical' ? criticalColor : normalColor,
+          fontFamily,
+          lineHeight: 1.2,
+          whiteSpace: 'normal',
+          wordBreak: 'break-word',
+        }}>
+          {m.raw}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Food image with a graceful fallback. New menu items often ship before
 // a photo is uploaded, and the previous strategy (`display: none` on
 // error) collapsed the layout — with the larger photo sizes that now
@@ -1289,15 +1361,11 @@ export default function LineCoachDisplay({ storeId }) {
               )}
               {primaryItem?.name}
             </div>
-            {primaryItem?.modifiers?.length > 0 && (
-              <div style={{
-                fontSize: 'clamp(1.4rem, 2.2vw, 2.2rem)',
-                fontWeight: 700,
-                color: BRAND.white,
-                fontFamily: "'Open Sans', sans-serif",
-                lineHeight: 1.25,
-              }}>{primaryItem.modifiers.join(' · ')}</div>
-            )}
+            <ModifierLines
+              modifiers={primaryItem?.modifiers}
+              size="clamp(1.4rem, 2.2vw, 2.2rem)"
+              gap="4px"
+            />
             {sidesText && (
               <div style={{
                 fontSize: 'clamp(1.2rem, 1.9vw, 1.9rem)',
@@ -1342,15 +1410,19 @@ export default function LineCoachDisplay({ storeId }) {
                       <span style={{ color: BRAND.gold, marginRight: '8px' }}>{it.quantity}x</span>
                     )}
                     {it.name}
-                    {it.modifiers?.length > 0 && (
-                      <span style={{
-                        color: BRAND.cream,
-                        fontWeight: 500,
+                    {/* Secondary items keep an inline modifier list (vertical
+                        space is already at a premium below the hero). We still
+                        drop cosmetic restate-default mods and color critical
+                        deviations gold so the hierarchy matches the hero. */}
+                    {visibleModifiers(it.modifiers).map((m, mi) => (
+                      <span key={mi} style={{
+                        color: m.kind === 'critical' ? BRAND.gold : BRAND.cream,
+                        fontWeight: m.kind === 'critical' ? 700 : 500,
                         textTransform: 'none',
                         marginLeft: '10px',
                         fontFamily: "'Open Sans', sans-serif",
-                      }}> · {it.modifiers.join(' · ')}</span>
-                    )}
+                      }}> · {m.raw}</span>
+                    ))}
                   </div>
                 ))}
               </div>
@@ -1861,23 +1933,14 @@ export default function LineCoachDisplay({ storeId }) {
                                 )}
                                 {item.name}
                               </div>
-                              {item.modifiers?.length > 0 && (
-                                <div style={{
-                                  // Modifiers fill the leftover space to the right
-                                  // of the entree name. Allowed to wrap so long
-                                  // modifier strings remain fully readable instead
-                                  // of being truncated by ellipsis.
-                                  flex: 1,
-                                  minWidth: 0,
-                                  fontSize: modifierSize,
-                                  fontWeight: 700,
-                                  color: BRAND.white,
-                                  fontFamily: "'Open Sans', sans-serif",
-                                  lineHeight: 1.2,
-                                  whiteSpace: 'normal',
-                                  wordBreak: 'break-word',
-                                }}>{item.modifiers.join(' · ')}</div>
-                              )}
+                              {/* Modifiers fill the leftover space to the right
+                                  of the entree name. One modifier per line so
+                                  cooks scan top-to-bottom; deviations ("Sub",
+                                  "No", "Extra"...) render gold to draw the eye
+                                  first. Cosmetic restate-default modifiers
+                                  ("Regular X", "Standard X") are filtered out
+                                  entirely by classifyModifier. */}
+                              <ModifierLines modifiers={item.modifiers} size={modifierSize} style={{ flex: 1 }} />
                             </div>
                             );
                           })}
@@ -2336,17 +2399,14 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                       {item.name}
                     </div>
                   </div>
-                  {item.modifiers?.length > 0 && (
-                    <div style={{
-                      fontSize: '1.1rem',
-                      color: BRAND.white,
-                      fontWeight: 600,
-                      marginTop: '6px',
-                      lineHeight: 1.3,
-                    }}>
-                      {item.modifiers.join(' · ')}
-                    </div>
-                  )}
+                  <div style={{ marginTop: '6px' }}>
+                    <ModifierLines
+                      modifiers={item.modifiers}
+                      size="1.1rem"
+                      fontWeight={600}
+                      gap="3px"
+                    />
+                  </div>
                   {(() => {
                     const coachText = pickTipText(coachTip, language);
                     if (!coachText) return null;
