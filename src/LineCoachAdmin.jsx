@@ -339,6 +339,43 @@ async function uploadImage(file, kind, name, token) {
   return await res.json();
 }
 
+// Downscale + re-encode an image in the browser before upload. Vercel
+// caps serverless request bodies at ~4.5MB, so a phone photo (often
+// 5-12MB) returns 413 before it ever reaches the upload route. Kitchen
+// photos render at a few hundred px on the displays, so shrinking to a
+// 1600px max edge at JPEG q0.82 keeps them crisp while landing well
+// under the limit — and loads faster on the Pi kiosks.
+//
+// Animated GIFs pass through untouched: a canvas re-encode would flatten
+// the animation, and food GIFs are rare and already small. If decode
+// fails for any reason we return the original and let the server-side
+// type/size checks handle it.
+async function downscaleImage(file, maxDim = 1600, quality = 0.82) {
+  if (!file.type?.startsWith('image/') || file.type === 'image/gif') return file;
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    return file;
+  }
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  // White matte so PNG/WebP transparency doesn't render black in JPEG.
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close?.();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+  if (!blob) return file;
+  const baseName = (file.name || 'image').replace(/\.[^.]+$/, '');
+  return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
+}
+
 // Mirrors the display's getSideImageUrl fallback so admins can see
 // the same photo cooks see — even when no image_url has been uploaded
 // yet. Falls back to /sides/<slug>.jpg, which is the legacy bundled-
@@ -399,7 +436,8 @@ function ImageCell({ value, kind, name, token, onChange }) {
             setBusy(true);
             setErr('');
             try {
-              const { url } = await uploadImage(file, kind, name, token);
+              const prepared = await downscaleImage(file);
+              const { url } = await uploadImage(prepared, kind, name, token);
               onChange(url);
             } catch (uploadErr) {
               setErr(uploadErr.message);
