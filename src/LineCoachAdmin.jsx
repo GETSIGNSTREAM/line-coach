@@ -528,16 +528,40 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   // "Generate Phone Link"; auto-clears via setTimeout in the handler.
   const [phoneLinkMsg, setPhoneLinkMsg] = useState('');
 
+  // Restore a previously-issued admin token so a page refresh mid-shift
+  // doesn't force a re-login. Cleared on 401 (see logout) when the token
+  // has expired or JWT_SECRET rotated.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('lc-admin-token');
+      if (saved) setToken(saved);
+    } catch { /* private mode / SSR — fall through to login */ }
+  }, []);
+
+  function logout() {
+    setToken(null);
+    try { localStorage.removeItem('lc-admin-token'); } catch { /* ignore */ }
+  }
+
   async function handleLogin(e) {
     e.preventDefault();
+    setLoginError('');
     try {
-      // Brand-wide config is fetched without a store, but the API
-      // currently requires one for routing. Use any store slug — the
-      // returned brand fields are identical brand-wide.
-      await fetch('/api/line-coach/config?store=' + (storeId || STORE_OPTIONS[0].slug));
-      if (password) {
-        setToken(password);
-        setLoginError('');
+      const res = await fetch('/api/line-coach/admin-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setLoginError(err.error || (res.status === 401 ? 'Invalid password' : 'Login failed'));
+        return;
+      }
+      const data = await res.json();
+      if (data.token) {
+        setToken(data.token);
+        setPassword('');
+        try { localStorage.setItem('lc-admin-token', data.token); } catch { /* ignore */ }
       }
     } catch {
       setLoginError('Login failed');
@@ -776,6 +800,12 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
         setDirty(false);
         setSaveMsg('Saved!');
         setTimeout(() => setSaveMsg(''), 3000);
+      } else if (res.status === 401) {
+        // Token expired or JWT_SECRET rotated — bounce to login rather
+        // than leaving the admin stuck on a panel where nothing saves
+        // (the exact failure mode that prompted this login flow).
+        setSaveMsg('Session expired — please log in again.');
+        logout();
       } else {
         const err = await res.json();
         setSaveMsg(`Error: ${err.error}`);
