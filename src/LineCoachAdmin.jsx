@@ -377,7 +377,12 @@ async function decodeImage(file) {
 // GIFs pass through untouched (a canvas re-encode would flatten them).
 // If decode fails entirely we return the original and let the server's
 // own type/size checks reject it with a clear message.
-async function downscaleImage(file, { maxDim = 1600, maxBytes = 3_500_000 } = {}) {
+//
+// `type`/`matte` control output: the default JPEG-on-white is right for
+// normal photos, while background-removed cutouts pass type:'image/webp'
+// + matte:null to preserve transparency (WebP keeps alpha AND compresses,
+// unlike PNG which would balloon the file).
+async function downscaleImage(file, { maxDim = 1600, maxBytes = 3_500_000, type = 'image/jpeg', matte = '#ffffff' } = {}) {
   if (!file.type?.startsWith('image/') || file.type === 'image/gif') return file;
   const decoded = await decodeImage(file);
   if (!decoded || !decoded.width || !decoded.height) return file;
@@ -394,12 +399,16 @@ async function downscaleImage(file, { maxDim = 1600, maxBytes = 3_500_000 } = {}
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
-    // White matte so PNG/WebP transparency doesn't render black in JPEG.
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, w, h);
+    // Matte fills the backdrop for opaque output (JPEG can't store alpha,
+    // so transparency would render black). Skipped when matte is null so
+    // cutouts keep their transparent background.
+    if (matte) {
+      ctx.fillStyle = matte;
+      ctx.fillRect(0, 0, w, h);
+    }
     ctx.drawImage(source, 0, 0, w, h);
     // eslint-disable-next-line no-await-in-loop
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, type, quality));
     if (!blob) break;
     best = blob;
     if (blob.size <= maxBytes) break;
@@ -409,8 +418,25 @@ async function downscaleImage(file, { maxDim = 1600, maxBytes = 3_500_000 } = {}
   }
   source.close?.();
   if (!best) return file;
+  const ext = type === 'image/webp' ? 'webp' : type === 'image/png' ? 'png' : 'jpg';
   const baseName = (file.name || 'image').replace(/\.[^.]+$/, '');
-  return new File([best], `${baseName}.jpg`, { type: 'image/jpeg' });
+  return new File([best], `${baseName}.${ext}`, { type });
+}
+
+// Remove the background from a photo entirely in the browser, returning
+// a transparent cutout File ready for downscaleImage. Lazy-imports the
+// model library so the (heavy) WASM/model code only loads the first time
+// an admin actually removes a background — it never touches the initial
+// admin bundle. On any failure we return null so the caller can fall
+// back to a normal compressed upload rather than blocking on it.
+async function cutoutBackground(file) {
+  try {
+    const { removeBackground } = await import('@imgly/background-removal');
+    const cut = await removeBackground(file);
+    return new File([cut], file.name || 'image.png', { type: cut.type || 'image/png' });
+  } catch {
+    return null;
+  }
 }
 
 // Mirrors the display's getSideImageUrl fallback so admins can see
@@ -425,8 +451,9 @@ function legacyImagePath(name) {
   return `/sides/${slug}.jpg`;
 }
 
-function ImageCell({ value, kind, name, token, onChange }) {
+function ImageCell({ value, kind, name, token, onChange, removeBg = false }) {
   const [busy, setBusy] = useState(false);
+  const [busyMsg, setBusyMsg] = useState('');
   const [err, setErr] = useState('');
   // Track whether the legacy fallback image actually exists. We start
   // optimistic (true) and flip to false on the <img> onError. This way
@@ -473,7 +500,24 @@ function ImageCell({ value, kind, name, token, onChange }) {
             setBusy(true);
             setErr('');
             try {
-              const prepared = await downscaleImage(file);
+              let prepared;
+              if (removeBg) {
+                // First removal on a device downloads the model (slow);
+                // surface that so the cell doesn't look hung.
+                setBusyMsg('Removing bg…');
+                const cut = await cutoutBackground(file);
+                if (cut) {
+                  // Transparent cutout → WebP keeps alpha and stays small.
+                  prepared = await downscaleImage(cut, { type: 'image/webp', matte: null });
+                } else {
+                  // Removal failed — fall back to a normal compressed
+                  // upload so the admin still gets a usable photo.
+                  prepared = await downscaleImage(file);
+                }
+              } else {
+                prepared = await downscaleImage(file);
+              }
+              setBusyMsg('Uploading…');
               const { url } = await uploadImage(prepared, kind, name, token);
               onChange(url);
             } catch (uploadErr) {
@@ -481,6 +525,7 @@ function ImageCell({ value, kind, name, token, onChange }) {
               setTimeout(() => setErr(''), 4000);
             }
             setBusy(false);
+            setBusyMsg('');
             e.target.value = '';
           }}
         />
@@ -501,6 +546,17 @@ function ImageCell({ value, kind, name, token, onChange }) {
           textTransform: 'uppercase',
         }}>bundled</div>
       )}
+      {busy && busyMsg && (
+        <div style={{
+          fontSize: '0.6rem',
+          color: '#D4A574',
+          fontFamily: "'Oswald', sans-serif",
+          letterSpacing: '0.5px',
+          textTransform: 'uppercase',
+          textAlign: 'center',
+          maxWidth: '70px',
+        }}>{busyMsg}</div>
+      )}
       {err && <div style={{ fontSize: '0.65rem', color: '#D64545', maxWidth: '70px', textAlign: 'center' }}>{err}</div>}
     </div>
   );
@@ -519,6 +575,32 @@ function BrandWideBanner() {
     }}>
       <strong style={{ color: '#D4A574' }}>BRAND-WIDE</strong> — changes here apply to all WILDBIRD stores.
     </div>
+  );
+}
+
+// Session toggle for the photo-upload pipeline. On = remove background
+// and upload a transparent cutout; off = upload the photo as-is. Doubles
+// as the per-image escape hatch (uncheck and re-upload a rough cutout).
+function BgRemovalToggle({ checked, onChange }) {
+  return (
+    <label style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '6px',
+      cursor: 'pointer',
+      fontSize: '0.8rem',
+      color: '#E8DCC8',
+      fontFamily: "'Oswald', sans-serif",
+      letterSpacing: '0.5px',
+    }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ cursor: 'pointer' }}
+      />
+      Remove background on upload
+    </label>
   );
 }
 
@@ -602,6 +684,11 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   // success/error/clipboard message that appears after pressing
   // "Generate Phone Link"; auto-clears via setTimeout in the handler.
   const [phoneLinkMsg, setPhoneLinkMsg] = useState('');
+  // When on, photo uploads run browser-side background removal and
+  // upload a transparent cutout. The toggle doubles as the escape hatch:
+  // if a cutout comes out rough, uncheck it and re-upload that photo to
+  // keep the original background.
+  const [removeBgOnUpload, setRemoveBgOnUpload] = useState(true);
 
   // Restore a previously-issued admin token so a page refresh mid-shift
   // doesn't force a re-login. Cleared on 401 (see logout) when the token
@@ -960,6 +1047,8 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           {importMsg && (
             <span style={{ marginLeft: '8px', color: importMsg.startsWith('Import failed') ? BRAND.red : BRAND.green, fontSize: '0.85rem' }}>{importMsg}</span>
           )}
+          <span style={{ flex: 1 }} />
+          <BgRemovalToggle checked={removeBgOnUpload} onChange={setRemoveBgOnUpload} />
         </div>
         <div style={{ fontSize: '0.75rem', color: `${BRAND.cream}80`, marginBottom: '12px' }}>
           Headers: <code>name, station, cook_time, category, coach_tip_en, coach_tip_es</code> · Edit in Excel/Sheets, save as CSV, then re-import.
@@ -997,7 +1086,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
               return (
                 <tr key={i}>
                   <td style={styles.td}>
-                    <ImageCell value={item.image_url} kind="item" name={item.name} token={token}
+                    <ImageCell value={item.image_url} kind="item" name={item.name} token={token} removeBg={removeBgOnUpload}
                       onChange={(url) => { const u = [...items]; u[i] = { ...item, image_url: url || undefined }; updateConfig('menu_items', u); }} />
                   </td>
                   <td style={styles.td}>
@@ -1071,6 +1160,8 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           {importMsg && (
             <span style={{ marginLeft: '8px', color: importMsg.startsWith('Import failed') ? BRAND.red : BRAND.green, fontSize: '0.85rem' }}>{importMsg}</span>
           )}
+          <span style={{ flex: 1 }} />
+          <BgRemovalToggle checked={removeBgOnUpload} onChange={setRemoveBgOnUpload} />
         </div>
         <div style={{ fontSize: '0.75rem', color: `${BRAND.cream}80`, marginBottom: '12px' }}>
           Headers: <code>name, station, cook_time, batch_size</code> · Edit in Excel/Sheets, save as CSV, then re-import.
@@ -1090,7 +1181,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
             {items.map((item, i) => (
               <tr key={i}>
                 <td style={styles.td}>
-                  <ImageCell value={item.image_url} kind="side" name={item.name} token={token}
+                  <ImageCell value={item.image_url} kind="side" name={item.name} token={token} removeBg={removeBgOnUpload}
                     onChange={(url) => { const u = [...items]; u[i] = { ...item, image_url: url || undefined }; updateConfig('sides', u); }} />
                 </td>
                 <td style={styles.td}>
