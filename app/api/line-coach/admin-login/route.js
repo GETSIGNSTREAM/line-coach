@@ -55,6 +55,18 @@ export async function POST(request) {
     return NextResponse.json({ error: 'Invalid password' }, { status: 401 });
   }
 
+  // Surface a missing signing secret as a clear, JSON error instead of
+  // letting signToken throw — an unhandled throw returns a non-JSON 500
+  // that the client can only render as a generic "Login failed", which
+  // sends admins chasing the password when the real gap is JWT_SECRET.
+  if (!process.env.JWT_SECRET) {
+    console.error('admin-login: JWT_SECRET is not set');
+    return NextResponse.json(
+      { error: 'Server auth is not configured (JWT_SECRET missing).' },
+      { status: 500 },
+    );
+  }
+
   const token = signToken({ role: 'admin' }, TOKEN_TTL);
   return NextResponse.json({ token, expires_in: TOKEN_TTL });
 }
