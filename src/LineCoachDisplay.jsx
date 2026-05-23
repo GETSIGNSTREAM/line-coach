@@ -149,6 +149,57 @@ function getSideImageUrl(name, configItems, configSides) {
   return `/sides/${slug}.jpg`;
 }
 
+// Food image with a graceful fallback. New menu items often ship before
+// a photo is uploaded, and the previous strategy (`display: none` on
+// error) collapsed the layout — with the larger photo sizes that now
+// drive entree + sides cards, the empty space looked broken. This
+// component keeps the slot's exact dimensions whether the image loads
+// or not, and renders a subtle plate glyph on failure so the card
+// still reads as "there's a dish here, photo just isn't on file yet."
+//
+// Pass through the same `style` you'd give an <img>: width/height (or
+// width + aspectRatio), borderRadius, etc. The wrapper carries that
+// styling; the img / fallback fill it.
+function FoodPhoto({ src, alt, style = {} }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div style={{
+      background: BRAND.charcoalDark,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+      flexShrink: 0,
+      ...style,
+    }}>
+      {!failed && src && (
+        <img
+          src={src}
+          alt={alt}
+          onError={() => setFailed(true)}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: 'block',
+          }}
+        />
+      )}
+      {failed && (
+        // Two concentric circles read as "plate" at any size and don't
+        // need translation. Gold at low opacity stays on-brand without
+        // shouting; cooks see it and read "no photo on file."
+        <svg viewBox="0 0 24 24" width="55%" height="55%" fill="none"
+          stroke={BRAND.gold} strokeOpacity="0.4" strokeWidth="1.4"
+          aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="5" />
+        </svg>
+      )}
+    </div>
+  );
+}
+
 // ── Component ───────────────────────────────────────────
 
 export default function LineCoachDisplay({ storeId }) {
@@ -1215,18 +1266,15 @@ export default function LineCoachDisplay({ storeId }) {
             gap: '18px',
             minWidth: 0,
           }}>
-            <img
+            <FoodPhoto
               src={getSideImageUrl(primaryItem?.name || '', menuItems, configSides)}
               alt={primaryItem?.name || ''}
               style={{
                 width: '100%',
                 aspectRatio: '4 / 3',
                 maxHeight: '46vh',
-                objectFit: 'cover',
                 borderRadius: '12px',
-                background: BRAND.charcoalDark,
               }}
-              onError={(e) => { e.target.style.display = 'none'; }}
             />
             <div style={{
               fontSize: 'clamp(2.4rem, 4vw, 4.5rem)',
@@ -1777,17 +1825,14 @@ export default function LineCoachDisplay({ storeId }) {
                               gap: '12px',
                               minWidth: 0,
                             }}>
-                              <img
+                              <FoodPhoto
                                 src={getSideImageUrl(item.name, menuItems, configSides)}
                                 alt={item.name}
                                 style={{
                                   width: photoSize,
                                   height: photoSize,
-                                  objectFit: 'cover',
                                   borderRadius: '8px',
-                                  flexShrink: 0,
                                 }}
-                                onError={(e) => { e.target.style.display = 'none'; }}
                               />
                               {stationStyle && stationLabel && (
                                 <div style={{
@@ -1921,17 +1966,14 @@ export default function LineCoachDisplay({ storeId }) {
                   flex: 1,
                   padding: '0 2%',
                 }}>
-                  <img
+                  <FoodPhoto
                     src={imageUrl}
                     alt={name}
                     style={{
                       width: imgSize,
                       height: imgSize,
-                      objectFit: 'cover',
                       borderRadius: '8px',
-                      flexShrink: 0,
                     }}
-                    onError={(e) => { e.target.style.display = 'none'; }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
@@ -2259,17 +2301,14 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                 borderRadius: '10px',
                 padding: '14px 16px',
               }}>
-                <img
+                <FoodPhoto
                   src={getSideImageUrl(item.name, menuItems, configSides)}
                   alt={item.name}
                   style={{
                     width: '120px',
                     height: '120px',
                     borderRadius: '10px',
-                    objectFit: 'cover',
-                    flexShrink: 0,
                   }}
-                  onError={(e) => { e.target.style.display = 'none'; }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
