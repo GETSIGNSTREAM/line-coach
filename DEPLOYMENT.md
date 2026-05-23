@@ -171,6 +171,7 @@ Auto-deploys from `main` branch on GitHub push.
   - `SUPABASE_SERVICE_ROLE_KEY`
   - `JWT_SECRET`
   - `TOAST_WEBHOOK_SECRET`
+  - `ADMIN_PASSWORD` — shared admin-panel password. The login box posts it to `/api/line-coach/admin-login`, which returns a 30-day admin JWT. Rotate it to force all admins to re-login.
 
 ---
 
