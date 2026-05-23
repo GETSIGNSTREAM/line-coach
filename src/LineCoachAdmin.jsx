@@ -339,41 +339,78 @@ async function uploadImage(file, kind, name, token) {
   return await res.json();
 }
 
+// Decode a File to something canvas.drawImage accepts. Prefers
+// createImageBitmap (fast, off-thread) but falls back to an <img>
+// element for browsers/formats that throw — older iOS Safari and some
+// HEIC deliveries among them. Returns { source, width, height } or null
+// if neither path can decode it.
+async function decodeImage(file) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    return { source: bitmap, width: bitmap.width, height: bitmap.height };
+  } catch { /* fall back to <img> below */ }
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = url;
+    });
+    URL.revokeObjectURL(url);
+    return { source: img, width: img.naturalWidth, height: img.naturalHeight };
+  } catch {
+    return null;
+  }
+}
+
 // Downscale + re-encode an image in the browser before upload. Vercel
 // caps serverless request bodies at ~4.5MB, so a phone photo (often
 // 5-12MB) returns 413 before it ever reaches the upload route. Kitchen
-// photos render at a few hundred px on the displays, so shrinking to a
-// 1600px max edge at JPEG q0.82 keeps them crisp while landing well
-// under the limit — and loads faster on the Pi kiosks.
+// photos render at a few hundred px on the displays, so shrinking keeps
+// them crisp while landing well under the limit — and loads faster on
+// the Pi kiosks.
 //
-// Animated GIFs pass through untouched: a canvas re-encode would flatten
-// the animation, and food GIFs are rare and already small. If decode
-// fails for any reason we return the original and let the server-side
-// type/size checks handle it.
-async function downscaleImage(file, maxDim = 1600, quality = 0.82) {
+// Guarantees the result is under maxBytes (default 3.5MB, comfortably
+// below the edge limit) by iteratively dropping dimensions + quality if
+// a high-megapixel shot is still too big after the first pass. Animated
+// GIFs pass through untouched (a canvas re-encode would flatten them).
+// If decode fails entirely we return the original and let the server's
+// own type/size checks reject it with a clear message.
+async function downscaleImage(file, { maxDim = 1600, maxBytes = 3_500_000 } = {}) {
   if (!file.type?.startsWith('image/') || file.type === 'image/gif') return file;
-  let bitmap;
-  try {
-    bitmap = await createImageBitmap(file);
-  } catch {
-    return file;
+  const decoded = await decodeImage(file);
+  if (!decoded || !decoded.width || !decoded.height) return file;
+  const { source, width: srcW, height: srcH } = decoded;
+
+  let dim = maxDim;
+  let quality = 0.82;
+  let best = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const scale = Math.min(1, dim / Math.max(srcW, srcH));
+    const w = Math.max(1, Math.round(srcW * scale));
+    const h = Math.max(1, Math.round(srcH * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    // White matte so PNG/WebP transparency doesn't render black in JPEG.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(source, 0, 0, w, h);
+    // eslint-disable-next-line no-await-in-loop
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob) break;
+    best = blob;
+    if (blob.size <= maxBytes) break;
+    // Still too big — shrink the longest edge and quality, then retry.
+    dim = Math.round(dim * 0.8);
+    quality = Math.max(0.6, quality - 0.07);
   }
-  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
-  const w = Math.max(1, Math.round(bitmap.width * scale));
-  const h = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  // White matte so PNG/WebP transparency doesn't render black in JPEG.
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, w, h);
-  ctx.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close?.();
-  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
-  if (!blob) return file;
+  source.close?.();
+  if (!best) return file;
   const baseName = (file.name || 'image').replace(/\.[^.]+$/, '');
-  return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
+  return new File([best], `${baseName}.jpg`, { type: 'image/jpeg' });
 }
 
 // Mirrors the display's getSideImageUrl fallback so admins can see
