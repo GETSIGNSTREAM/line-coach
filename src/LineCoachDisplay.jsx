@@ -149,6 +149,129 @@ function getSideImageUrl(name, configItems, configSides) {
   return `/sides/${slug}.jpg`;
 }
 
+// Classify a single Toast modifier string. Drives the modifier list's
+// visual hierarchy on every order surface:
+//   critical — deviations the customer asked for ("No Onions", "Sub
+//     Chicken", "Extra Salsa", "Light Sauce", "Without Garlic", "On the
+//     Side"). Missing one of these is what turns into a remade dish,
+//     so they render in gold so cooks lock on first.
+//   cosmetic — text that restates the menu default and adds noise
+//     without information ("Regular X", "Standard X", "Default", "No
+//     Modifications", "None"). Hidden entirely — they were the main
+//     reason long modifier strings dominated cards in Hollywood feedback.
+//   normal — a genuine selection that isn't a deviation (e.g. "Brown
+//     Rice", "Chipotle Aioli"). Still important to the cook, just not
+//     elevated above other modifiers.
+//
+// Regexes are intentionally verb-first / first-word matches so a
+// modifier like "Chipotle Sauce" doesn't get flagged critical just
+// because it contains the word "sauce". Order matters — cosmetic
+// patterns run first so "Regular No-Cheese" (unlikely but possible)
+// stays cosmetic rather than promoting to critical.
+function classifyModifier(text) {
+  if (!text || typeof text !== 'string') return 'cosmetic';
+  const t = text.trim();
+  if (!t) return 'cosmetic';
+  if (/^(?:no\s+modifications?|none|n\/a|default|standard)$/i.test(t)) return 'cosmetic';
+  if (/^(?:regular|standard|default)\s+\w/i.test(t)) return 'cosmetic';
+  if (/^(?:no|sub|substitute|swap|add|extra|light|heavy|without|hold|w\/o|w\/?out)\b/i.test(t)) return 'critical';
+  if (/^(?:on\s+the\s+side|side\s+of|side\s*[-–])\b/i.test(t)) return 'critical';
+  return 'normal';
+}
+
+// Filter + classify a raw modifier array. Returns an array of
+// { raw, kind } entries with cosmetic restate-default entries removed.
+// Shared by ModifierLines (cards / detail sheet / focus primary) and
+// the focus-mode secondary-items list (which still renders inline).
+function visibleModifiers(modifiers) {
+  return (modifiers || [])
+    .map((m) => ({ raw: typeof m === 'string' ? m : String(m ?? ''), kind: classifyModifier(m) }))
+    .filter((m) => m.kind !== 'cosmetic' && m.raw);
+}
+
+// Render a modifier list as one line per modifier with critical
+// deviations colored gold. Used by the rush + comfortable card, the
+// focus-mode hero, and the order detail sheet so every surface
+// presents modifiers with the same visual hierarchy.
+function ModifierLines({ modifiers, size, fontWeight = 700, fontFamily = "'Open Sans', sans-serif", normalColor = BRAND.white, criticalColor = BRAND.gold, gap = '2px', style = {} }) {
+  const list = visibleModifiers(modifiers);
+  if (list.length === 0) return null;
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      gap,
+      minWidth: 0,
+      ...style,
+    }}>
+      {list.map((m, i) => (
+        <div key={i} style={{
+          fontSize: size,
+          fontWeight,
+          color: m.kind === 'critical' ? criticalColor : normalColor,
+          fontFamily,
+          lineHeight: 1.2,
+          whiteSpace: 'normal',
+          wordBreak: 'break-word',
+        }}>
+          {m.raw}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Food image with a graceful fallback. New menu items often ship before
+// a photo is uploaded, and the previous strategy (`display: none` on
+// error) collapsed the layout — with the larger photo sizes that now
+// drive entree + sides cards, the empty space looked broken. This
+// component keeps the slot's exact dimensions whether the image loads
+// or not, and renders a subtle plate glyph on failure so the card
+// still reads as "there's a dish here, photo just isn't on file yet."
+//
+// Pass through the same `style` you'd give an <img>: width/height (or
+// width + aspectRatio), borderRadius, etc. The wrapper carries that
+// styling; the img / fallback fill it.
+function FoodPhoto({ src, alt, style = {} }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div style={{
+      background: BRAND.charcoalDark,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+      flexShrink: 0,
+      ...style,
+    }}>
+      {!failed && src && (
+        <img
+          src={src}
+          alt={alt}
+          onError={() => setFailed(true)}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: 'block',
+          }}
+        />
+      )}
+      {failed && (
+        // Two concentric circles read as "plate" at any size and don't
+        // need translation. Gold at low opacity stays on-brand without
+        // shouting; cooks see it and read "no photo on file."
+        <svg viewBox="0 0 24 24" width="55%" height="55%" fill="none"
+          stroke={BRAND.gold} strokeOpacity="0.4" strokeWidth="1.4"
+          aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="5" />
+        </svg>
+      )}
+    </div>
+  );
+}
+
 // ── Component ───────────────────────────────────────────
 
 export default function LineCoachDisplay({ storeId }) {
@@ -1215,18 +1338,15 @@ export default function LineCoachDisplay({ storeId }) {
             gap: '18px',
             minWidth: 0,
           }}>
-            <img
+            <FoodPhoto
               src={getSideImageUrl(primaryItem?.name || '', menuItems, configSides)}
               alt={primaryItem?.name || ''}
               style={{
                 width: '100%',
                 aspectRatio: '4 / 3',
                 maxHeight: '46vh',
-                objectFit: 'cover',
                 borderRadius: '12px',
-                background: BRAND.charcoalDark,
               }}
-              onError={(e) => { e.target.style.display = 'none'; }}
             />
             <div style={{
               fontSize: 'clamp(2.4rem, 4vw, 4.5rem)',
@@ -1241,15 +1361,11 @@ export default function LineCoachDisplay({ storeId }) {
               )}
               {primaryItem?.name}
             </div>
-            {primaryItem?.modifiers?.length > 0 && (
-              <div style={{
-                fontSize: 'clamp(1.4rem, 2.2vw, 2.2rem)',
-                fontWeight: 700,
-                color: BRAND.white,
-                fontFamily: "'Open Sans', sans-serif",
-                lineHeight: 1.25,
-              }}>{primaryItem.modifiers.join(' · ')}</div>
-            )}
+            <ModifierLines
+              modifiers={primaryItem?.modifiers}
+              size="clamp(1.4rem, 2.2vw, 2.2rem)"
+              gap="4px"
+            />
             {sidesText && (
               <div style={{
                 fontSize: 'clamp(1.2rem, 1.9vw, 1.9rem)',
@@ -1294,15 +1410,19 @@ export default function LineCoachDisplay({ storeId }) {
                       <span style={{ color: BRAND.gold, marginRight: '8px' }}>{it.quantity}x</span>
                     )}
                     {it.name}
-                    {it.modifiers?.length > 0 && (
-                      <span style={{
-                        color: BRAND.cream,
-                        fontWeight: 500,
+                    {/* Secondary items keep an inline modifier list (vertical
+                        space is already at a premium below the hero). We still
+                        drop cosmetic restate-default mods and color critical
+                        deviations gold so the hierarchy matches the hero. */}
+                    {visibleModifiers(it.modifiers).map((m, mi) => (
+                      <span key={mi} style={{
+                        color: m.kind === 'critical' ? BRAND.gold : BRAND.cream,
+                        fontWeight: m.kind === 'critical' ? 700 : 500,
                         textTransform: 'none',
                         marginLeft: '10px',
                         fontFamily: "'Open Sans', sans-serif",
-                      }}> · {it.modifiers.join(' · ')}</span>
-                    )}
+                      }}> · {m.raw}</span>
+                    ))}
                   </div>
                 ))}
               </div>
@@ -1466,18 +1586,22 @@ export default function LineCoachDisplay({ storeId }) {
               const MAX_VISIBLE = isComfortable ? 3 : 6;
               const visibleOrders = orderSequence.slice(0, MAX_VISIBLE);
               const hiddenCount = orderSequence.length - MAX_VISIBLE;
-              // Density-driven sizes (in px / rem). Rush values were
-              // bumped for touch ergonomics (sidebar 80→96, photo
-              // 48→60, padding 6→10) so every card is a confident tap
-              // target on the 22" wall-mounted touchscreen.
+              // Density-driven sizes (in px / rem). Hollywood post-deploy
+              // bump (May 2026): every primary size raised so the
+              // wall-mounted TV reads cleanly from the prep / pass
+              // sides of the line, not just from the cook's station.
+              // Rush mode gets the biggest jump because that's when
+              // the display matters most and cooks are furthest from
+              // it. Comfortable mode lifted proportionally so the two
+              // tiers still feel related.
               const rowPad = isComfortable ? '14px 0' : '10px 0';
-              const sidebarW = isComfortable ? '110px' : '96px';
-              const orderNumSize = isComfortable ? '1.4rem' : '1rem';
-              const customerSize = isComfortable ? '0.95rem' : '0.7rem';
-              const badgeSize = isComfortable ? '0.85rem' : '0.65rem';
-              const timerSize = isComfortable ? '1.6rem' : '1.1rem';
-              const photoSize = isComfortable ? '110px' : '60px';
-              const entreeNameSize = isComfortable ? '2.2rem' : '1.5rem';
+              const sidebarW = isComfortable ? '130px' : '116px';
+              const orderNumSize = isComfortable ? '1.7rem' : '1.5rem';
+              const customerSize = isComfortable ? '1.1rem' : '0.95rem';
+              const badgeSize = isComfortable ? '1rem' : '0.85rem';
+              const timerSize = isComfortable ? '2rem' : '1.7rem';
+              const photoSize = isComfortable ? '152px' : '104px';
+              const entreeNameSize = isComfortable ? '2.55rem' : '1.95rem';
               // Modifier + sides line are now BIGGER than the entree
               // name in rush mode and matched-or-larger in comfortable.
               // Cooks identify the dish from the photo first; the
@@ -1485,9 +1609,9 @@ export default function LineCoachDisplay({ storeId }) {
               // w/ Spanish Rice + Kale Slaw" detail is what they
               // actually need to read from across the line. Quality
               // accuracy depends on these being legible at distance.
-              const modifierSize = isComfortable ? '2.1rem' : '1.7rem';
-              const sidesLineSize = isComfortable ? '2.1rem' : '1.7rem';
-              const sidesIndent = isComfortable ? '124px' : '58px';
+              const modifierSize = isComfortable ? '2.5rem' : '2.2rem';
+              const sidesLineSize = isComfortable ? '2.5rem' : '2.2rem';
+              const sidesIndent = isComfortable ? '168px' : '120px';
 
               return (
                 <>
@@ -1640,8 +1764,8 @@ export default function LineCoachDisplay({ storeId }) {
                           fontWeight: 700,
                           letterSpacing: '2px',
                           textTransform: 'uppercase',
-                          fontSize: isComfortable ? '1.8rem' : '1.5rem',
-                          padding: isComfortable ? '12px 20px' : '8px 16px',
+                          fontSize: isComfortable ? '2.1rem' : '1.8rem',
+                          padding: isComfortable ? '14px 22px' : '10px 18px',
                           marginBottom: '6px',
                           borderRadius: '4px',
                           display: 'flex',
@@ -1773,26 +1897,23 @@ export default function LineCoachDisplay({ storeId }) {
                               gap: '12px',
                               minWidth: 0,
                             }}>
-                              <img
+                              <FoodPhoto
                                 src={getSideImageUrl(item.name, menuItems, configSides)}
                                 alt={item.name}
                                 style={{
                                   width: photoSize,
                                   height: photoSize,
-                                  objectFit: 'cover',
-                                  borderRadius: '50%',
-                                  flexShrink: 0,
+                                  borderRadius: '8px',
                                 }}
-                                onError={(e) => { e.target.style.display = 'none'; }}
                               />
                               {stationStyle && stationLabel && (
                                 <div style={{
                                   ...stationStyle,
                                   fontFamily: "'Oswald', sans-serif",
                                   fontWeight: 700,
-                                  fontSize: isComfortable ? '0.8rem' : '0.65rem',
+                                  fontSize: isComfortable ? '1rem' : '0.85rem',
                                   letterSpacing: '1.5px',
-                                  padding: isComfortable ? '4px 8px' : '2px 6px',
+                                  padding: isComfortable ? '5px 10px' : '3px 8px',
                                   borderRadius: '4px',
                                   flexShrink: 0,
                                   whiteSpace: 'nowrap',
@@ -1812,23 +1933,14 @@ export default function LineCoachDisplay({ storeId }) {
                                 )}
                                 {item.name}
                               </div>
-                              {item.modifiers?.length > 0 && (
-                                <div style={{
-                                  // Modifiers fill the leftover space to the right
-                                  // of the entree name. Allowed to wrap so long
-                                  // modifier strings remain fully readable instead
-                                  // of being truncated by ellipsis.
-                                  flex: 1,
-                                  minWidth: 0,
-                                  fontSize: modifierSize,
-                                  fontWeight: 700,
-                                  color: BRAND.white,
-                                  fontFamily: "'Open Sans', sans-serif",
-                                  lineHeight: 1.2,
-                                  whiteSpace: 'normal',
-                                  wordBreak: 'break-word',
-                                }}>{item.modifiers.join(' · ')}</div>
-                              )}
+                              {/* Modifiers fill the leftover space to the right
+                                  of the entree name. One modifier per line so
+                                  cooks scan top-to-bottom; deviations ("Sub",
+                                  "No", "Extra"...) render gold to draw the eye
+                                  first. Cosmetic restate-default modifiers
+                                  ("Regular X", "Standard X") are filtered out
+                                  entirely by classifyModifier. */}
+                              <ModifierLines modifiers={item.modifiers} size={modifierSize} style={{ flex: 1 }} />
                             </div>
                             );
                           })}
@@ -1900,12 +2012,14 @@ export default function LineCoachDisplay({ storeId }) {
               // outside of render to avoid setTimeout-during-render).
               const isFlashing = flashSideRef.current.has(name);
 
-              // Dynamic sizing based on number of sides — compact for narrow column
+              // Dynamic sizing based on number of sides — compact for narrow column.
+              // Bumped post-Hollywood: name + count went up so the side-batch
+              // panel reads from the prep station, not just from arm's reach.
               const n = batchedSides.length;
-              const imgSize = n <= 4 ? '7vh' : n <= 8 ? '5.5vh' : '4.5vh';
-              const nameSize = n <= 4 ? '1.5vh' : n <= 8 ? '1.3vh' : '1.1vh';
-              const countSize = n <= 4 ? '5vh' : n <= 8 ? '4vh' : '3vh';
-              const actionSize = n <= 4 ? '1.2vh' : n <= 8 ? '1vh' : '0.9vh';
+              const imgSize = n <= 4 ? '9vh' : n <= 8 ? '7vh' : '5.5vh';
+              const nameSize = n <= 4 ? '1.9vh' : n <= 8 ? '1.6vh' : '1.35vh';
+              const countSize = n <= 4 ? '5.8vh' : n <= 8 ? '4.6vh' : '3.6vh';
+              const actionSize = n <= 4 ? '1.4vh' : n <= 8 ? '1.2vh' : '1.05vh';
 
               return (
                 <div key={name} style={{
@@ -1915,21 +2029,18 @@ export default function LineCoachDisplay({ storeId }) {
                   flex: 1,
                   padding: '0 2%',
                 }}>
-                  <img
+                  <FoodPhoto
                     src={imageUrl}
                     alt={name}
                     style={{
                       width: imgSize,
                       height: imgSize,
-                      objectFit: 'cover',
-                      borderRadius: '50%',
-                      flexShrink: 0,
+                      borderRadius: '8px',
                     }}
-                    onError={(e) => { e.target.style.display = 'none'; }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      fontSize: `clamp(1rem, ${nameSize}, 2rem)`,
+                      fontSize: `clamp(1.2rem, ${nameSize}, 2.4rem)`,
                       fontWeight: 700,
                       color: BRAND.bone,
                       fontFamily: "'Oswald', sans-serif",
@@ -1947,7 +2058,7 @@ export default function LineCoachDisplay({ storeId }) {
                         // minutes. We only show it when batches > 1
                         // since a single batch is the default mental
                         // model and doesn't need reinforcement.
-                        fontSize: `clamp(0.7rem, ${actionSize}, 1.1rem)`,
+                        fontSize: `clamp(0.85rem, ${actionSize}, 1.3rem)`,
                         fontWeight: 700,
                         color: BRAND.gold,
                         fontFamily: "'Oswald', sans-serif",
@@ -1962,7 +2073,7 @@ export default function LineCoachDisplay({ storeId }) {
                   <div
                     key={isFlashing ? `${name}-${count}` : name}
                     style={{
-                      fontSize: `clamp(2rem, ${countSize}, 6rem)`,
+                      fontSize: `clamp(2.4rem, ${countSize}, 7rem)`,
                       fontWeight: 700,
                       color: BRAND.gold,
                       fontFamily: "'Oswald', sans-serif",
@@ -2253,17 +2364,14 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                 borderRadius: '10px',
                 padding: '14px 16px',
               }}>
-                <img
+                <FoodPhoto
                   src={getSideImageUrl(item.name, menuItems, configSides)}
                   alt={item.name}
                   style={{
-                    width: '88px',
-                    height: '88px',
-                    borderRadius: '50%',
-                    objectFit: 'cover',
-                    flexShrink: 0,
+                    width: '120px',
+                    height: '120px',
+                    borderRadius: '10px',
                   }}
-                  onError={(e) => { e.target.style.display = 'none'; }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
@@ -2291,17 +2399,14 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                       {item.name}
                     </div>
                   </div>
-                  {item.modifiers?.length > 0 && (
-                    <div style={{
-                      fontSize: '1.1rem',
-                      color: BRAND.white,
-                      fontWeight: 600,
-                      marginTop: '6px',
-                      lineHeight: 1.3,
-                    }}>
-                      {item.modifiers.join(' · ')}
-                    </div>
-                  )}
+                  <div style={{ marginTop: '6px' }}>
+                    <ModifierLines
+                      modifiers={item.modifiers}
+                      size="1.1rem"
+                      fontWeight={600}
+                      gap="3px"
+                    />
+                  </div>
                   {(() => {
                     const coachText = pickTipText(coachTip, language);
                     if (!coachText) return null;
@@ -2397,7 +2502,7 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle })
         <img
           src="/WILDBIRD-LOGO-WHITE.png"
           alt="WILDBIRD"
-          style={{ height: '36px', width: 'auto', display: 'block' }}
+          style={{ height: '44px', width: 'auto', display: 'block' }}
           onError={(e) => {
             e.currentTarget.style.display = 'none';
             const fallback = e.currentTarget.nextElementSibling;
@@ -2499,14 +2604,14 @@ const s = {
     letterSpacing: '2px',
   },
   ticketCount: {
-    fontSize: '1rem',
+    fontSize: '1.3rem',
     fontWeight: 700,
     color: BRAND.bone,
     fontFamily: "'Oswald', sans-serif",
     letterSpacing: '2px',
   },
   clock: {
-    fontSize: '1.1rem',
+    fontSize: '1.4rem',
     color: BRAND.cream,
     fontVariantNumeric: 'tabular-nums',
     fontFamily: "'Open Sans', sans-serif",
@@ -2514,10 +2619,10 @@ const s = {
   // Main Layout
   mainGrid: {
     display: 'grid',
-    gridTemplateColumns: '1fr 280px',
+    gridTemplateColumns: '1fr 320px',
     gap: '8px',
     padding: '8px',
-    height: 'calc(100vh - 50px)',
+    height: 'calc(100vh - 56px)',
     overflow: 'hidden',
   },
   leftCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
@@ -2530,12 +2635,12 @@ const s = {
   },
   // Side Batching
   sidesPanelHeader: {
-    fontSize: '0.85rem',
+    fontSize: '1.05rem',
     fontWeight: 700,
     color: BRAND.gold,
     fontFamily: "'Oswald', sans-serif",
     letterSpacing: '2px',
-    padding: '4px 2%',
+    padding: '6px 2%',
     flexShrink: 0,
   },
   sidesContainer: {
