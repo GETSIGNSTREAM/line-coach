@@ -1583,7 +1583,7 @@ export default function LineCoachDisplay({ storeId }) {
               // Touch-era cap: rush max went 8 → 6 because 22" wall-mount
               // taps need ≥60px targets (was 48px). Better to scroll past
               // 6 than to mis-tap the wrong card with greasy hands.
-              const MAX_VISIBLE = isComfortable ? 3 : 6;
+              const MAX_VISIBLE = isComfortable ? 3 : 5;
               const visibleOrders = orderSequence.slice(0, MAX_VISIBLE);
               const hiddenCount = orderSequence.length - MAX_VISIBLE;
               // Density-driven sizes (in px / rem). Hollywood post-deploy
@@ -1600,7 +1600,7 @@ export default function LineCoachDisplay({ storeId }) {
               const customerSize = isComfortable ? '1.1rem' : '0.95rem';
               const badgeSize = isComfortable ? '1rem' : '0.85rem';
               const timerSize = isComfortable ? '2rem' : '1.7rem';
-              const photoSize = isComfortable ? '152px' : '104px';
+              const photoSize = isComfortable ? '200px' : '140px';
               const entreeNameSize = isComfortable ? '2.55rem' : '1.95rem';
               // Modifier + sides line are now BIGGER than the entree
               // name in rush mode and matched-or-larger in comfortable.
@@ -1611,7 +1611,7 @@ export default function LineCoachDisplay({ storeId }) {
               // accuracy depends on these being legible at distance.
               const modifierSize = isComfortable ? '2.5rem' : '2.2rem';
               const sidesLineSize = isComfortable ? '2.5rem' : '2.2rem';
-              const sidesIndent = isComfortable ? '168px' : '120px';
+              const sidesIndent = isComfortable ? '216px' : '156px';
 
               return (
                 <>
@@ -2013,13 +2013,15 @@ export default function LineCoachDisplay({ storeId }) {
               const isFlashing = flashSideRef.current.has(name);
 
               // Dynamic sizing based on number of sides — compact for narrow column.
-              // Bumped post-Hollywood: name + count went up so the side-batch
-              // panel reads from the prep station, not just from arm's reach.
+              // Lead-with-visuals bump: side photos go as large as the column
+              // height allows for the row count (each row is flex:1, so the
+              // image can't exceed its share of the column without clipping).
+              // Finer tiers keep them as big as possible at every load.
               const n = batchedSides.length;
-              const imgSize = n <= 4 ? '9vh' : n <= 8 ? '7vh' : '5.5vh';
-              const nameSize = n <= 4 ? '1.9vh' : n <= 8 ? '1.6vh' : '1.35vh';
-              const countSize = n <= 4 ? '5.8vh' : n <= 8 ? '4.6vh' : '3.6vh';
-              const actionSize = n <= 4 ? '1.4vh' : n <= 8 ? '1.2vh' : '1.05vh';
+              const imgSize = n <= 4 ? '11vh' : n <= 6 ? '9.5vh' : n <= 9 ? '8vh' : '6.8vh';
+              const nameSize = n <= 4 ? '2.1vh' : n <= 6 ? '1.8vh' : n <= 9 ? '1.6vh' : '1.4vh';
+              const countSize = n <= 4 ? '6vh' : n <= 6 ? '5.2vh' : n <= 9 ? '4.6vh' : '3.9vh';
+              const actionSize = n <= 4 ? '1.5vh' : n <= 6 ? '1.3vh' : n <= 9 ? '1.2vh' : '1.05vh';
 
               return (
                 <div key={name} style={{
