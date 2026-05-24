@@ -1795,75 +1795,102 @@ export default function LineCoachDisplay({ storeId }) {
                           justifyContent: 'center',
                           padding: '6px 4px',
                           flexShrink: 0,
-                          gap: '3px',
                         }}>
+                          {/* Identity group: order # + customer name kept
+                              tight together so they read as one unit. */}
                           <div style={{
-                            fontSize: orderNumSize,
-                            fontWeight: 700,
-                            color: BRAND.bone,
-                            fontFamily: "'Oswald', sans-serif",
-                          }}>#{order.orderNum}</div>
-                          {order.customerName && (
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '1px',
+                          }}>
                             <div style={{
-                              fontSize: customerSize,
-                              color: BRAND.cream,
-                              fontFamily: "'Open Sans', sans-serif",
-                              textAlign: 'center',
-                              lineHeight: 1.2,
-                            }}>{order.customerName}</div>
-                          )}
-                          {order.priority === 'rush' && (
-                            <div style={{
-                              fontSize: badgeSize,
-                              background: BRAND.white,
-                              color: BRAND.charcoal,
-                              padding: '2px 6px',
-                              borderRadius: '3px',
-                              fontFamily: "'Oswald', sans-serif",
+                              fontSize: orderNumSize,
                               fontWeight: 700,
-                            }}>ASAP</div>
-                          )}
-                          {!order.isFutureOrder && diningLabel && order.priority !== 'rush' && (
-                            <div style={{
-                              fontSize: badgeSize,
-                              background: diningColor,
-                              color: BRAND.charcoal,
-                              padding: '2px 6px',
-                              borderRadius: '3px',
+                              color: BRAND.bone,
                               fontFamily: "'Oswald', sans-serif",
-                              fontWeight: 700,
-                            }}>{diningLabel.toUpperCase()}</div>
-                          )}
-                          {order.isFutureOrder && (
+                            }}>#{order.orderNum}</div>
+                            {order.customerName && (
+                              <div style={{
+                                fontSize: customerSize,
+                                color: BRAND.cream,
+                                fontFamily: "'Open Sans', sans-serif",
+                                textAlign: 'center',
+                                lineHeight: 1.2,
+                              }}>{order.customerName}</div>
+                            )}
+                          </div>
+                          {/* Badge group: ASAP / dining / scheduled-time /
+                              courier badges live in one coherent cluster,
+                              set off from identity + timer by a larger gap.
+                              Wrapper only renders when a badge applies so
+                              plain dine-in tickets don't get an empty gap. */}
+                          {(order.priority === 'rush'
+                            || (!order.isFutureOrder && diningLabel && order.priority !== 'rush')
+                            || order.isFutureOrder
+                            || (order.orderChannel && CHANNEL_STYLES[order.orderChannel])) && (
                             <div style={{
-                              fontSize: badgeSize,
-                              background: BRAND.blue,
-                              color: BRAND.charcoal,
-                              padding: '2px 6px',
-                              borderRadius: '3px',
-                              fontFamily: "'Oswald', sans-serif",
-                              fontWeight: 700,
-                            }}>{order.fireAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>
-                          )}
-                          {/* Order channel badge — only for delivery
-                              couriers. In-store / null renders no
-                              badge (most volume, no signal needed).
-                              Cooks treat delivery orders differently
-                              from walk-ins, so this is the highest-
-                              value signal on the sidebar. */}
-                          {order.orderChannel && CHANNEL_STYLES[order.orderChannel] && (
-                            <div style={{
-                              ...CHANNEL_STYLES[order.orderChannel],
-                              fontSize: badgeSize,
-                              padding: '2px 6px',
-                              borderRadius: '3px',
-                              fontFamily: "'Oswald', sans-serif",
-                              fontWeight: 700,
-                              letterSpacing: '1px',
-                            }}>{CHANNEL_LABELS[order.orderChannel]}</div>
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: '4px',
+                              marginTop: '10px',
+                            }}>
+                              {order.priority === 'rush' && (
+                                <div style={{
+                                  fontSize: badgeSize,
+                                  background: BRAND.white,
+                                  color: BRAND.charcoal,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  fontFamily: "'Oswald', sans-serif",
+                                  fontWeight: 700,
+                                }}>ASAP</div>
+                              )}
+                              {!order.isFutureOrder && diningLabel && order.priority !== 'rush' && (
+                                <div style={{
+                                  fontSize: badgeSize,
+                                  background: diningColor,
+                                  color: BRAND.charcoal,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  fontFamily: "'Oswald', sans-serif",
+                                  fontWeight: 700,
+                                }}>{diningLabel.toUpperCase()}</div>
+                              )}
+                              {order.isFutureOrder && (
+                                <div style={{
+                                  fontSize: badgeSize,
+                                  background: BRAND.blue,
+                                  color: BRAND.charcoal,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  fontFamily: "'Oswald', sans-serif",
+                                  fontWeight: 700,
+                                }}>{order.fireAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>
+                              )}
+                              {/* Order channel badge — only for delivery
+                                  couriers. In-store / null renders no
+                                  badge (most volume, no signal needed).
+                                  Cooks treat delivery orders differently
+                                  from walk-ins, so this is the highest-
+                                  value signal on the sidebar. */}
+                              {order.orderChannel && CHANNEL_STYLES[order.orderChannel] && (
+                                <div style={{
+                                  ...CHANNEL_STYLES[order.orderChannel],
+                                  fontSize: badgeSize,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  fontFamily: "'Oswald', sans-serif",
+                                  fontWeight: 700,
+                                  letterSpacing: '1px',
+                                }}>{CHANNEL_LABELS[order.orderChannel]}</div>
+                              )}
+                            </div>
                           )}
                           {!order.isFutureOrder && (
                             <div style={{
+                              marginTop: '10px',
                               fontSize: timerSize,
                               color: ticketBorderColor,
                               fontWeight: 700,
