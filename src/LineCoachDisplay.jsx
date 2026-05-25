@@ -431,15 +431,82 @@ export default function LineCoachDisplay({ storeId }) {
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
+  // Live order updates via Supabase Realtime. Kitchen screens run
+  // unattended for hours, so the socket WILL drop (wifi blips, tablet
+  // sleep, Supabase recycling connections, shared-instance limits). A
+  // bare .subscribe() with no status handling freezes the board on its
+  // last fetch until someone reloads. So we re-subscribe with backoff on
+  // error/close and refetch on every (re)connect to catch up on anything
+  // missed while the socket was down.
   useEffect(() => {
     const client = supabaseRef.current;
     if (!client) return;
-    const channel = client
-      .channel('lc-orders-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lc_orders', filter: `store_id=eq.${storeId}` }, () => fetchOrders())
-      .subscribe();
-    return () => { client.removeChannel(channel); };
+
+    let channel = null;
+    let reconnectTimer = null;
+    let attempt = 0;
+    let cancelled = false;
+
+    function scheduleReconnect() {
+      if (cancelled || reconnectTimer) return;
+      // Exponential backoff capped at 30s so a flapping network doesn't
+      // hammer the shared Supabase instance.
+      const delay = Math.min(30_000, 1000 * 2 ** attempt);
+      attempt += 1;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (cancelled) return;
+        const old = channel;
+        channel = null;
+        // Removing the old channel fires its CLOSED status; the
+        // `ch !== channel` guard below ignores it so we don't loop.
+        if (old) client.removeChannel(old);
+        subscribe();
+      }, delay);
+    }
+
+    function subscribe() {
+      const ch = client
+        .channel(`lc-orders-${storeId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'lc_orders', filter: `store_id=eq.${storeId}` }, () => fetchOrders());
+      channel = ch;
+      ch.subscribe((status) => {
+        if (ch !== channel) return; // stale channel, ignore late callbacks
+        if (status === 'SUBSCRIBED') {
+          // (Re)connected — pull a fresh snapshot in case rows changed
+          // while we were disconnected.
+          attempt = 0;
+          fetchOrders();
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          scheduleReconnect();
+        }
+      });
+    }
+
+    subscribe();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (channel) client.removeChannel(channel);
+    };
   }, [storeId, fetchOrders]);
+
+  // Safety net: realtime is best-effort, so poll the orders endpoint on a
+  // slow interval and whenever the screen regains focus (e.g. a tablet
+  // waking from sleep). Cheap insurance that the board self-heals and
+  // never sits stale even if realtime never reconnects.
+  useEffect(() => {
+    const interval = setInterval(fetchOrders, 20_000);
+    const onWake = () => { if (document.visibilityState === 'visible') fetchOrders(); };
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+    };
+  }, [fetchOrders]);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 1000);
