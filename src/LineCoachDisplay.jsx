@@ -278,6 +278,10 @@ export default function LineCoachDisplay({ storeId }) {
   const [orders, setOrders] = useState([]);
   const [config, setConfig] = useState(null);
   const [now, setNow] = useState(new Date());
+  // Slow-period swap is debounced: the board only flips to Quality Coach
+  // after it has been empty for a few seconds (see effect below), so a
+  // transient gap between orders doesn't blank the whole screen.
+  const [slowConfirmed, setSlowConfirmed] = useState(false);
   const [qualityTipIndex, setQualityTipIndex] = useState(0);
   // Focus mode (1 order on board) rotates through every item on the
   // order so each dish gets its own coaching moment in turn.
@@ -288,6 +292,11 @@ export default function LineCoachDisplay({ storeId }) {
   // can mute the monitor at the OS/hardware level if needed. We still
   // try to resume on any incidental interaction.
   const supabaseRef = useRef(null);
+  // Monotonic fetch counter. Realtime events, the 20s poll, and reconnect
+  // catch-ups can fire overlapping order fetches; this lets us drop any
+  // response that arrives after a newer one so a late/stale (possibly
+  // empty) snapshot never clobbers fresh data and blanks the board.
+  const fetchSeqRef = useRef(0);
   const audioCtxRef = useRef(null);
   const lastOrderCountRef = useRef(null);
   // Track which order ids have already triggered a warning beep so we
@@ -423,9 +432,16 @@ export default function LineCoachDisplay({ storeId }) {
   }, [storeId]);
 
   const fetchOrders = useCallback(() => {
+    const seq = ++fetchSeqRef.current;
     fetch(`/api/line-coach/orders?store=${storeId}`)
       .then((r) => r.json())
-      .then((data) => setOrders(data.orders || []))
+      .then((data) => {
+        // Drop out-of-order responses so a slow/stale fetch can't
+        // overwrite a newer one (which would blank then re-fill the
+        // board — a visible flicker).
+        if (seq !== fetchSeqRef.current) return;
+        setOrders(data.orders || []);
+      })
       .catch(console.error);
   }, [storeId]);
 
@@ -962,7 +978,24 @@ export default function LineCoachDisplay({ storeId }) {
     return (now.getTime() - t) / 60_000 < maxTicketMin;
   });
   const staleCount = apiOrderCount - visibleOrders.length;
-  const isSlowPeriod = visibleOrders.length === 0;
+  // Swap to Quality Coach only once the board has been empty for a beat.
+  // An order appearing flips back instantly (cooks must see tickets the
+  // moment they land); only the empty→Quality-Coach direction waits.
+  const boardEmpty = visibleOrders.length === 0;
+  const isSlowPeriod = boardEmpty && slowConfirmed;
+
+  useEffect(() => {
+    if (!boardEmpty) {
+      // Orders on the board → show it immediately, cancel any pending swap.
+      setSlowConfirmed(false);
+      return undefined;
+    }
+    // Board just emptied. Hold on the (calm) empty board for a few
+    // seconds before switching to Quality Coach so a momentary gap
+    // between tickets doesn't blank the whole screen and snap back.
+    const t = setTimeout(() => setSlowConfirmed(true), 8000);
+    return () => clearTimeout(t);
+  }, [boardEmpty]);
 
   // Side Batching: aggregate sides across all active orders.
   //
