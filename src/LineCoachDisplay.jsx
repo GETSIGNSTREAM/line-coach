@@ -816,10 +816,15 @@ export default function LineCoachDisplay({ storeId }) {
     const liveCounts = new Map();
     for (const o of orders) {
       for (const side of o.sides || []) {
-        const sn = typeof side === 'string' ? side : side?.name;
-        const sq = typeof side === 'object' ? (side.quantity || 1) : 1;
+        const isObj = typeof side === 'object' && side !== null;
+        const sn = isObj ? side.name : (typeof side === 'string' ? side : null);
         if (!sn) continue;
-        liveCounts.set(sn, (liveCounts.get(sn) || 0) + sq);
+        const size = (isObj && side.size) ? side.size : 'regular';
+        const sq = isObj ? (side.quantity || 1) : 1;
+        // Key matches the panel's bucket (canonical name + size) so the
+        // flash lands on the right row when Large/Regular split out.
+        const key = `${canonicalSideName(sn) || sn}|${size}`;
+        liveCounts.set(key, (liveCounts.get(key) || 0) + sq);
       }
     }
     const flashed = [];
@@ -1021,13 +1026,16 @@ export default function LineCoachDisplay({ storeId }) {
   //     name so cook_time / batch_size hits even when the configured
   //     side has a slightly different label than what Toast sent.
   function getBatchedSides() {
-    const sideCounts = {};            // canonicalName → total qty
-    // Track per (order id, canonical name) what we've already credited,
-    // and HOW MUCH. Using a count rather than a boolean lets us still
-    // capture additional contributions from the items pass when the
-    // sides-pass entry was less than what's actually on the order
-    // (rare, but defensive).
-    const credited = new Map();       // `${orderId}::${canonicalName}` → qty already added
+    // bucketKey (`canonicalName|size`) → { name, size, total, alaCarteQty }.
+    // Size splits the bucket (Large is a separate prep row from Regular);
+    // à la carte portions still count toward the same prep bucket but are
+    // tallied separately so the panel can tag how many go out solo.
+    const buckets = new Map();
+    // Track per (order id, canonical name, size) how much we've credited
+    // from the sides array, plus a per (order, canonical) set so the
+    // items pass never double-counts a side the order already has.
+    const credited = new Map();
+    const creditedCanonical = new Set();
     const findConfig = (canonicalName) => {
       if (!canonicalName) return null;
       const lower = canonicalName.toLowerCase();
@@ -1051,22 +1059,36 @@ export default function LineCoachDisplay({ storeId }) {
     let synth = 0;
     const orderKey = (o) => o?.id || o?.toast_order_id || o?.order_number || `__synth_${++synth}__`;
 
+    const bump = (canonical, size, qty, alaCarte) => {
+      const key = `${canonical}|${size}`;
+      let b = buckets.get(key);
+      if (!b) { b = { name: canonical, size, total: 0, alaCarteQty: 0 }; buckets.set(key, b); }
+      b.total += qty;
+      if (alaCarte) b.alaCarteQty += qty;
+    };
+
     for (const order of visibleOrders) {
       const oid = orderKey(order);
       for (const side of order.sides || []) {
-        const rawName = side?.name || (typeof side === 'string' ? side : null);
+        const isObj = typeof side === 'object' && side !== null;
+        const rawName = isObj ? side.name : (typeof side === 'string' ? side : null);
         if (!rawName) continue;
         const canonical = canonicalSideName(rawName) || rawName;
-        const qty = parseQty(side?.quantity);
-        sideCounts[canonical] = (sideCounts[canonical] || 0) + qty;
-        const key = `${oid}::${canonical}`;
-        credited.set(key, (credited.get(key) || 0) + qty);
+        // Backwards compatible: rows written before size tracking have
+        // no size/alaCarte fields → treat as a regular add-on.
+        const size = (isObj && side.size) ? side.size : 'regular';
+        const alaCarte = isObj && !!side.alaCarte;
+        const qty = parseQty(isObj ? side.quantity : 1);
+        bump(canonical, size, qty, alaCarte);
+        credited.set(`${oid}::${canonical}::${size}`, (credited.get(`${oid}::${canonical}::${size}`) || 0) + qty);
+        creditedCanonical.add(`${oid}::${canonical}`);
       }
     }
     // Catch sides that were inlined as items rather than pushed to
     // order.sides (rare, but covers Toast inlining a side as an item).
-    // We still skip when the sides-pass already credited this
-    // (orderId, canonicalName) since the webhook normally extracts both.
+    // Skip when the sides pass already credited this (orderId, side) in
+    // any size, since the webhook normally extracts both. Inlined sides
+    // carry no size/à-la-carte signal, so they land in the regular bucket.
     for (const order of visibleOrders) {
       const oid = orderKey(order);
       for (const item of order.items || []) {
@@ -1074,21 +1096,25 @@ export default function LineCoachDisplay({ storeId }) {
         if (!isCanonicalSide(item.name)) continue;
         const canonical = canonicalSideName(item.name);
         if (!canonical) continue;
-        const key = `${oid}::${canonical}`;
-        if (credited.has(key)) continue;
+        if (creditedCanonical.has(`${oid}::${canonical}`)) continue;
         const qty = parseQty(item?.quantity);
-        sideCounts[canonical] = (sideCounts[canonical] || 0) + qty;
-        credited.set(key, qty);
+        bump(canonical, 'regular', qty, false);
+        creditedCanonical.add(`${oid}::${canonical}`);
       }
     }
-    // Sort by cook time (longest first), then by count
-    return Object.entries(sideCounts)
-      .sort((a, b) => {
-        const aCook = findConfig(a[0])?.cook_time || 0;
-        const bCook = findConfig(b[0])?.cook_time || 0;
-        if (bCook !== aCook) return bCook - aCook;
-        return b[1] - a[1];
-      });
+    // Sort: longest cook time first (prep priority), then keep a side's
+    // sizes adjacent (by name), Large before Regular, then larger count.
+    const sizeRank = { large: 0, small: 1, regular: 2 };
+    return [...buckets.values()].sort((a, b) => {
+      const aCook = findConfig(a.name)?.cook_time || 0;
+      const bCook = findConfig(b.name)?.cook_time || 0;
+      if (bCook !== aCook) return bCook - aCook;
+      if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+      const ar = sizeRank[a.size] ?? 3;
+      const br = sizeRank[b.size] ?? 3;
+      if (ar !== br) return ar - br;
+      return b.total - a.total;
+    });
   }
 
   // Timer thresholds — prefer brand-wide hold_times (the 8-min coach
@@ -1324,7 +1350,11 @@ export default function LineCoachDisplay({ storeId }) {
     const sidesText = order.sides.map((side) => {
       const sn = typeof side === 'string' ? side : side.name;
       const sq = side.quantity || 1;
-      return sq > 1 ? `${sq}x ${sn}` : sn;
+      const size = (typeof side === 'object' && side.size && side.size !== 'regular')
+        ? ` (${side.size === 'large' ? 'LG' : 'SM'})`
+        : '';
+      const label = `${sn}${size}`;
+      return sq > 1 ? `${sq}x ${label}` : label;
     }).join(', ');
     const allergyNote = isAllergyNote(order.notes) ? order.notes : null;
     const inlineNote = allergyNote ? null : order.notes;
@@ -2123,7 +2153,12 @@ export default function LineCoachDisplay({ storeId }) {
             {batchedSides.length === 0 && (
               <div style={s.emptyState}>—</div>
             )}
-            {batchedSides.map(([name, count]) => {
+            {batchedSides.map(({ name, size, total: count, alaCarteQty }) => {
+              // Bucket key splits a side by portion size, so Large and
+              // Regular render as their own rows with their own flash.
+              const bucketKey = `${name}|${size}`;
+              const isLarge = size === 'large';
+              const isSmall = size === 'small';
               // Case-insensitive lookup so the configured side row is
               // found even if it's labeled slightly differently than
               // the canonical name we resolved to.
@@ -2137,7 +2172,7 @@ export default function LineCoachDisplay({ storeId }) {
               // Flash flag is computed in the side-count effect below
               // (stable ref read during render is safe; mutations live
               // outside of render to avoid setTimeout-during-render).
-              const isFlashing = flashSideRef.current.has(name);
+              const isFlashing = flashSideRef.current.has(bucketKey);
 
               // Dynamic sizing based on number of sides — compact for narrow column.
               // Lead-with-visuals bump: side photos go as large as the column
@@ -2151,7 +2186,7 @@ export default function LineCoachDisplay({ storeId }) {
               const actionSize = n <= 4 ? '1.5vh' : n <= 6 ? '1.3vh' : n <= 9 ? '1.2vh' : '1.05vh';
 
               return (
-                <div key={name} style={{
+                <div key={bucketKey} style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '3%',
@@ -2168,15 +2203,49 @@ export default function LineCoachDisplay({ storeId }) {
                     }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontSize: `clamp(1.2rem, ${nameSize}, 2.4rem)`,
-                      fontWeight: 700,
-                      color: BRAND.bone,
-                      fontFamily: "'Oswald', sans-serif",
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
-                      lineHeight: 1.2,
-                    }}>{name}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      <div style={{
+                        fontSize: `clamp(1.2rem, ${nameSize}, 2.4rem)`,
+                        fontWeight: 700,
+                        color: BRAND.bone,
+                        fontFamily: "'Oswald', sans-serif",
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                        lineHeight: 1.2,
+                      }}>{name}</div>
+                      {(isLarge || isSmall) && (
+                        // Portion-size chip — only on non-regular rows, so
+                        // Regular stays clean and Large/Small pop as the
+                        // "different prep" signal.
+                        <span style={{
+                          fontSize: `clamp(0.7rem, ${actionSize}, 1.1rem)`,
+                          fontWeight: 700,
+                          fontFamily: "'Oswald', sans-serif",
+                          letterSpacing: '0.5px',
+                          color: BRAND.charcoalDark,
+                          background: BRAND.gold,
+                          borderRadius: '4px',
+                          padding: '1px 6px',
+                          lineHeight: 1.3,
+                        }}>{isLarge ? 'LG' : 'SM'}</span>
+                      )}
+                    </div>
+                    {alaCarteQty > 0 && (
+                      // À la carte tag, in place: this bucket includes
+                      // portions the guest ordered solo (not as an entree
+                      // add-on). Count shown since the bucket may mix both.
+                      <div style={{
+                        fontSize: `clamp(0.78rem, ${actionSize}, 1.2rem)`,
+                        fontWeight: 700,
+                        color: BRAND.cream,
+                        fontFamily: "'Oswald', sans-serif",
+                        letterSpacing: '1px',
+                        marginTop: '2px',
+                        opacity: 0.75,
+                      }}>
+                        {alaCarteQty} À LA CARTE
+                      </div>
+                    )}
                     {batchesNeeded > 1 && (
                       <div style={{
                         // Line Coach is for quality + accuracy, NOT
@@ -2200,7 +2269,7 @@ export default function LineCoachDisplay({ storeId }) {
                     )}
                   </div>
                   <div
-                    key={isFlashing ? `${name}-${count}` : name}
+                    key={isFlashing ? `${bucketKey}-${count}` : bucketKey}
                     style={{
                       fontSize: `clamp(2.4rem, ${countSize}, 7rem)`,
                       fontWeight: 700,
@@ -2575,11 +2644,18 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {order.sides.map((side, si) => {
-                const sn = typeof side === 'string' ? side : side?.name;
-                const sq = typeof side === 'object' ? (side.quantity || 1) : 1;
+                const isObj = typeof side === 'object' && side !== null;
+                const sn = isObj ? side?.name : side;
+                const sq = isObj ? (side.quantity || 1) : 1;
+                const size = (isObj && side.size && side.size !== 'regular') ? side.size : null;
+                const alaCarte = isObj && !!side.alaCarte;
                 return (
-                  <div key={si} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.1rem', color: BRAND.cream, padding: '6px 0', borderBottom: `1px solid ${BRAND.charcoalLight}` }}>
-                    <span>{sn}</span>
+                  <div key={si} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', fontSize: '1.1rem', color: BRAND.cream, padding: '6px 0', borderBottom: `1px solid ${BRAND.charcoalLight}` }}>
+                    <span>
+                      {sn}
+                      {size && <span style={{ color: BRAND.gold, fontWeight: 700, marginLeft: '6px' }}>{size === 'large' ? 'LG' : 'SM'}</span>}
+                      {alaCarte && <span style={{ color: BRAND.cream, opacity: 0.7, fontSize: '0.85rem', letterSpacing: '0.5px', marginLeft: '8px' }}>À LA CARTE</span>}
+                    </span>
                     <span style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", fontWeight: 700 }}>× {sq}</span>
                   </div>
                 );
