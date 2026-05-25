@@ -284,6 +284,16 @@ function validateMenuItems(arr) {
     if (tipEn.trim() || tipEs.trim()) {
       out.coach_tip = { en: tipEn, es: tipEs };
     }
+    // Bilingual accuracy_note ("common miss") — same shape as coach_tip.
+    const accEn = (row.accuracy_note && typeof row.accuracy_note === 'object' && row.accuracy_note.en)
+      ? String(row.accuracy_note.en)
+      : (row.accuracy_note_en ? String(row.accuracy_note_en) : '');
+    const accEs = (row.accuracy_note && typeof row.accuracy_note === 'object' && row.accuracy_note.es)
+      ? String(row.accuracy_note.es)
+      : (row.accuracy_note_es ? String(row.accuracy_note_es) : '');
+    if (accEn.trim() || accEs.trim()) {
+      out.accuracy_note = { en: accEn, es: accEs };
+    }
     return out;
   });
 }
@@ -306,17 +316,20 @@ function validateSides(arr) {
   });
 }
 
-const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category', 'image_url', 'coach_tip_en', 'coach_tip_es'];
+const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category', 'image_url', 'coach_tip_en', 'coach_tip_es', 'accuracy_note_en', 'accuracy_note_es'];
 
-// Flatten menu items so coach_tip {en, es} round-trips cleanly through
-// the CSV (which has no nested-object support).
+// Flatten menu items so coach_tip / accuracy_note {en, es} round-trip
+// cleanly through the CSV (which has no nested-object support).
 function flattenMenuItemsForCsv(items) {
   return (items || []).map((it) => {
     const tip = (it.coach_tip && typeof it.coach_tip === 'object') ? it.coach_tip : null;
+    const acc = (it.accuracy_note && typeof it.accuracy_note === 'object') ? it.accuracy_note : null;
     return {
       ...it,
       coach_tip_en: tip ? (tip.en || '') : '',
       coach_tip_es: tip ? (tip.es || '') : '',
+      accuracy_note_en: acc ? (acc.en || '') : '',
+      accuracy_note_es: acc ? (acc.es || '') : '',
     };
   });
 }
@@ -1051,7 +1064,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           <BgRemovalToggle checked={removeBgOnUpload} onChange={setRemoveBgOnUpload} />
         </div>
         <div style={{ fontSize: '0.75rem', color: `${BRAND.cream}80`, marginBottom: '12px' }}>
-          Headers: <code>name, station, cook_time, category, coach_tip_en, coach_tip_es</code> · Edit in Excel/Sheets, save as CSV, then re-import.
+          Headers: <code>name, station, cook_time, category, coach_tip_en, coach_tip_es, accuracy_note_en, accuracy_note_es</code> · Edit in Excel/Sheets, save as CSV, then re-import.
         </div>
         <div style={{ fontSize: '0.8rem', color: BRAND.cream, marginBottom: '12px', padding: '8px 12px', background: `${BRAND.gold}15`, borderLeft: `3px solid ${BRAND.gold}`, borderRadius: '3px' }}>
           <strong style={{ color: BRAND.gold }}>Coach Tips:</strong> Shown on the kitchen display when only this dish is on the board (focus mode). Use to reinforce quality standards specific to this entree. Spanish is optional.
@@ -1065,6 +1078,8 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
               <th style={{ ...styles.th, width: '90px' }}>Cook Time</th>
               <th style={styles.th}>Coach Tip (EN)</th>
               <th style={styles.th}>Coach Tip (ES)</th>
+              <th style={styles.th}>Accuracy Note (EN)</th>
+              <th style={styles.th}>Accuracy Note (ES)</th>
               <th style={{ ...styles.th, width: '90px' }}>Actions</th>
             </tr>
           </thead>
@@ -1080,6 +1095,19 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
                 const newTip = { ...tip, [field]: value };
                 if (newTip.en.trim() || newTip.es.trim()) next.coach_tip = newTip;
                 else delete next.coach_tip;
+                u[i] = next;
+                updateConfig('menu_items', u);
+              };
+              // Accuracy note ("common miss") — same shape/handling as tip.
+              const acc = item.accuracy_note && typeof item.accuracy_note === 'object'
+                ? { en: item.accuracy_note.en || '', es: item.accuracy_note.es || '' }
+                : { en: '', es: '' };
+              const setAccuracyNote = (field, value) => {
+                const u = [...items];
+                const next = { ...item };
+                const newAcc = { ...acc, [field]: value };
+                if (newAcc.en.trim() || newAcc.es.trim()) next.accuracy_note = newAcc;
+                else delete next.accuracy_note;
                 u[i] = next;
                 updateConfig('menu_items', u);
               };
@@ -1125,6 +1153,24 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
                       placeholder="Optional — leave blank for English only"
                       value={tip.es}
                       onChange={(e) => setTip('es', e.target.value)}
+                    />
+                  </td>
+                  <td style={styles.td}>
+                    <textarea
+                      style={{ ...styles.textarea, marginBottom: 0, minHeight: '50px', minWidth: '220px' }}
+                      rows={2}
+                      placeholder="Common miss — e.g. Easy to forget the avocado"
+                      value={acc.en}
+                      onChange={(e) => setAccuracyNote('en', e.target.value)}
+                    />
+                  </td>
+                  <td style={styles.td}>
+                    <textarea
+                      style={{ ...styles.textarea, marginBottom: 0, minHeight: '50px', minWidth: '220px' }}
+                      rows={2}
+                      placeholder="Optional — leave blank for English only"
+                      value={acc.es}
+                      onChange={(e) => setAccuracyNote('es', e.target.value)}
                     />
                   </td>
                   <td style={styles.td}>
