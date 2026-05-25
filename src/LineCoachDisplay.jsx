@@ -204,19 +204,63 @@ function ModifierLines({ modifiers, size, fontWeight = 700, fontFamily = "'Open 
       minWidth: 0,
       ...style,
     }}>
-      {list.map((m, i) => (
-        <div key={i} style={{
-          fontSize: size,
-          fontWeight,
-          color: m.kind === 'critical' ? criticalColor : normalColor,
-          fontFamily,
-          lineHeight: 1.2,
-          whiteSpace: 'normal',
-          wordBreak: 'break-word',
-        }}>
-          {m.raw}
-        </div>
-      ))}
+      {list.map((m, i) => {
+        // Critical deviations (no/sub/add/on-the-side) are accuracy
+        // risks — a remake if missed. Render them as a filled chip with
+        // a caution glyph so they're impossible to blow past in a rush,
+        // not just gold text. Normal modifiers stay plain.
+        const isCritical = m.kind === 'critical';
+        return (
+          <div key={i} style={{
+            fontSize: size,
+            fontWeight,
+            color: isCritical ? BRAND.charcoalDark : normalColor,
+            fontFamily,
+            lineHeight: 1.2,
+            whiteSpace: 'normal',
+            wordBreak: 'break-word',
+            ...(isCritical ? {
+              display: 'inline-flex',
+              alignItems: 'baseline',
+              gap: '0.35em',
+              alignSelf: 'flex-start',
+              background: criticalColor,
+              padding: '1px 0.5em',
+              borderRadius: '4px',
+            } : {}),
+          }}>
+            {isCritical && <span aria-hidden="true" style={{ fontSize: '0.82em', lineHeight: 1 }}>▲</span>}
+            <span>{m.raw}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Per-item accuracy guardrail ("common miss"). Pulls the optional
+// bilingual menu_items[].accuracy_note and renders a compact caution
+// line so the line catches the dish's #1 mistake before it's plated.
+// Renders nothing when no note is configured (graceful, like coach_tip).
+// Distinct from coach_tip's quality coaching: gold ⚠ heads-up styling.
+function AccuracyNote({ note, language, size = '1rem', style = {} }) {
+  const text = note ? pickTipText(normalizeTip(note), language) : null;
+  if (!text) return null;
+  return (
+    <div style={{
+      display: 'inline-flex',
+      alignItems: 'baseline',
+      gap: '0.4em',
+      alignSelf: 'flex-start',
+      color: BRAND.gold,
+      fontFamily: "'Open Sans', sans-serif",
+      fontWeight: 700,
+      fontSize: size,
+      lineHeight: 1.25,
+      ...style,
+    }}>
+      <span aria-hidden="true" style={{ flexShrink: 0 }}>⚠</span>
+      <span>{text}</span>
     </div>
   );
 }
@@ -1496,6 +1540,7 @@ export default function LineCoachDisplay({ storeId }) {
               size="clamp(1.4rem, 2.2vw, 2.2rem)"
               gap="4px"
             />
+            <AccuracyNote note={primaryMenu?.accuracy_note} language={language} size="clamp(1.1rem, 1.7vw, 1.7rem)" style={{ marginTop: '6px' }} />
             {sidesText && (
               <div style={{
                 fontSize: 'clamp(1.2rem, 1.9vw, 1.9rem)',
@@ -2047,8 +2092,15 @@ export default function LineCoachDisplay({ storeId }) {
                             const station = stationFor(item.name, menuItems);
                             const stationStyle = station ? STATION_STYLES[station] : null;
                             const stationLabel = station ? STATION_LABELS[station] : null;
+                            const menuMatch = menuItems.find((m) => m.name === item.name);
                             return (
                             <div key={ii} style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '2px',
+                              minWidth: 0,
+                            }}>
+                            <div style={{
                               display: 'flex',
                               alignItems: 'center',
                               gap: '12px',
@@ -2098,6 +2150,8 @@ export default function LineCoachDisplay({ storeId }) {
                                   ("Regular X", "Standard X") are filtered out
                                   entirely by classifyModifier. */}
                               <ModifierLines modifiers={item.modifiers} size={modifierSize} style={{ flex: 1 }} />
+                            </div>
+                            <AccuracyNote note={menuMatch?.accuracy_note} language={language} size={modifierSize} style={{ paddingLeft: sidesIndent }} />
                             </div>
                             );
                           })}
@@ -2605,6 +2659,7 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                       gap="3px"
                     />
                   </div>
+                  <AccuracyNote note={menuMatch?.accuracy_note} language={language} size="1.05rem" style={{ marginTop: '8px' }} />
                   {(() => {
                     const coachText = pickTipText(coachTip, language);
                     if (!coachText) return null;
