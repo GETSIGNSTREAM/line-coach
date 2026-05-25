@@ -265,6 +265,36 @@ function AccuracyNote({ note, language, size = '1rem', style = {} }) {
   );
 }
 
+// In-service coaching line — the entree's coach_tip rendered as one
+// compact "cook it well" prompt. Shown inline only when the board is
+// calm (comfortable density); during a rush the board stays clean and
+// coaching lives in the tap-to-expand detail sheet instead. Styled
+// lighter than AccuracyNote (cream/italic ▸ vs gold ⚠) so the accuracy
+// guardrail still wins the eye. Renders nothing when no tip is set.
+function CoachLine({ tip, language, size = '1rem', style = {} }) {
+  const text = tip ? pickTipText(normalizeTip(tip), language) : null;
+  if (!text) return null;
+  return (
+    <div style={{
+      display: 'inline-flex',
+      alignItems: 'baseline',
+      gap: '0.4em',
+      alignSelf: 'flex-start',
+      color: BRAND.cream,
+      opacity: 0.9,
+      fontFamily: "'Open Sans', sans-serif",
+      fontStyle: 'italic',
+      fontWeight: 600,
+      fontSize: size,
+      lineHeight: 1.25,
+      ...style,
+    }}>
+      <span aria-hidden="true" style={{ fontStyle: 'normal', color: BRAND.gold, flexShrink: 0 }}>▸</span>
+      <span>{text}</span>
+    </div>
+  );
+}
+
 // Food image with a graceful fallback. New menu items often ship before
 // a photo is uploaded, and the previous strategy (`display: none` on
 // error) collapsed the layout — with the larger photo sizes that now
@@ -2152,6 +2182,9 @@ export default function LineCoachDisplay({ storeId }) {
                               <ModifierLines modifiers={item.modifiers} size={modifierSize} style={{ flex: 1 }} />
                             </div>
                             <AccuracyNote note={menuMatch?.accuracy_note} language={language} size={modifierSize} style={{ paddingLeft: sidesIndent }} />
+                            {isComfortable && (
+                              <CoachLine tip={menuMatch?.coach_tip} language={language} size={modifierSize} style={{ paddingLeft: sidesIndent }} />
+                            )}
                             </div>
                             );
                           })}
