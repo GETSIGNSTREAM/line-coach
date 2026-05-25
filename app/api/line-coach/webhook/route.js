@@ -3,7 +3,7 @@ import { createHmac } from 'crypto';
 import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId, logWebhook, getConfig, isWithinServiceWindow } from '@/lib/line-coach';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
-import { canonicalSideName } from '@/lib/side-canonical';
+import { canonicalSideName, parseSideSize, sizeFromModifiers } from '@/lib/side-canonical';
 
 function clientIp(request) {
   return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
@@ -195,10 +195,14 @@ function extractSidesFromModifiers(modifiers, entreeQuantity = 1) {
   const qty = Math.max(1, parseInt(entreeQuantity, 10) || 1);
 
   for (const mod of modifiers) {
-    const cleaned = mod.replace(/\s*\(LARGE\)/gi, '').replace(/\s*\(SMALL\)/gi, '').trim();
+    // Capture the portion size before stripping the "(LARGE)" suffix —
+    // the kitchen batches Large separately from Regular. Tolerates the
+    // missing-close-paren variant Toast occasionally sends ("(LARGE").
+    const size = parseSideSize(mod);
+    const cleaned = mod.replace(/\s*\((?:large|small)\b\)?/gi, '').trim();
     if (isSideItem(cleaned)) {
       const canonical = canonicalSideName(cleaned) || titleCase(cleaned);
-      sides.push({ name: canonical, quantity: qty });
+      sides.push({ name: canonical, quantity: qty, size, alaCarte: false });
     } else if (!SKIP_MODIFIERS.test(mod) && !isSauceItem(cleaned)) {
       remaining.push(titleCase(mod));
     }
@@ -428,10 +432,15 @@ export async function POST(request) {
       const rawModifiers = (item.modifiers || []).map((m) => m.displayName || m.name);
       const itemQty = Math.max(1, parseInt(item.quantity, 10) || 1);
 
-      // Standalone side
+      // Standalone (à la carte) side: the guest ordered the side on its
+      // own, not as an entree add-on. Its size arrives as a separate
+      // bare modifier ("Large" / "Regular"); fall back to any size baked
+      // into the name. Flagged alaCarte so the display can tag it.
       if (isSideItem(cleanName)) {
         const canonical = canonicalSideName(cleanName) || titleCase(cleanName);
-        sides.push({ name: canonical, quantity: itemQty });
+        let size = sizeFromModifiers(rawModifiers);
+        if (size === 'regular') size = parseSideSize(rawName);
+        sides.push({ name: canonical, quantity: itemQty, size, alaCarte: true });
         continue;
       }
 
@@ -448,13 +457,17 @@ export async function POST(request) {
       });
     }
 
-    // Deduplicate sides
+    // Deduplicate sides. Key on name + size + à-la-carte so Large stays
+    // separate from Regular and à la carte portions stay distinguishable
+    // from entree add-ons of the same side.
     const sideMap = {};
     for (const side of sides) {
-      if (sideMap[side.name]) {
-        sideMap[side.name].quantity += side.quantity;
+      const size = side.size || 'regular';
+      const key = `${side.name}|${size}|${side.alaCarte ? 'a' : 'e'}`;
+      if (sideMap[key]) {
+        sideMap[key].quantity += side.quantity;
       } else {
-        sideMap[side.name] = { ...side };
+        sideMap[key] = { ...side, size };
       }
     }
     const deduplicatedSides = Object.values(sideMap);
