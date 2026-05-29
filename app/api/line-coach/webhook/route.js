@@ -492,11 +492,21 @@ export async function POST(request) {
       return NextResponse.json({ status: 'ignored', reason: 'no food items' });
     }
 
-    // Timing: use Toast creation time, or promised time for future orders
+    // Timing: fire at creation time, unless this is a genuine
+    // schedule-ahead order. Toast sends promisedDate as the ASAP ready
+    // *quote* (median ~13 min out) on ordinary tickets, not just on
+    // scheduled orders — so honoring it blindly mis-flags normal orders
+    // as "future" (no timer, excluded from focus mode, hidden until 10
+    // min before the quote). Only treat the promise as a future fire
+    // time when it's far enough past creation to be a real pre-order.
     const toastCreatedAt = toastOrder.createdDate || toastOrder.openedDate || null;
-    const promisedDate = toastOrder.promisedDate || toastOrder.estimatedFulfillmentDate || null;
+    const promisedRaw = toastOrder.promisedDate || toastOrder.estimatedFulfillmentDate || null;
     const baseTime = toastCreatedAt ? new Date(toastCreatedAt) : new Date();
-    const fireAt = promisedDate ? new Date(promisedDate) : baseTime;
+    const promised = promisedRaw ? new Date(promisedRaw) : null;
+    const scheduleAheadMin = storeCfg?.hold_times?.schedule_ahead_minutes ?? 30;
+    const fireAt = (promised && promised.getTime() - baseTime.getTime() > scheduleAheadMin * 60_000)
+      ? promised
+      : baseTime;
     const estimatedReadyAt = new Date(fireAt.getTime() + 10 * 60_000);
 
     // Priority
