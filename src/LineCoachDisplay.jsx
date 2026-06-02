@@ -1390,6 +1390,22 @@ export default function LineCoachDisplay({ storeId }) {
   // doesn't need the chrome.
   if (density === 'focus') {
     const order = visibleNow[0];
+    // Focus mode mirrors the rush/comfortable card's bump gesture: hold
+    // anywhere on the order canvas for HOLD_DURATION_MS to bump, with
+    // the same optimistic UI + UndoToast path. Short taps do nothing in
+    // focus (the whole order is already visible — opening a detail
+    // sheet would be redundant), so we omit fromPointerUp.
+    const focusIsHolding = !!holdProgress && order.id != null && holdProgress.orderId === order.id;
+    const focusHoldPct = focusIsHolding ? holdProgress.pct : 0;
+    const focusOrderHandlers = touchEnabled && order.id ? {
+      onPointerDown: (e) => {
+        if (e.button && e.button !== 0) return;
+        startHold(order.id, order);
+      },
+      onPointerUp: () => cancelHold(order.id),
+      onPointerLeave: () => cancelHold(order.id),
+      onPointerCancel: () => cancelHold(order.id),
+    } : {};
     // Order items by longest-cook-time first so the rotation starts with
     // the most attention-demanding dish, then cycles through every item.
     const orderedItems = [...order.items].sort((a, b) => (b.cookTime || 0) - (a.cookTime || 0));
@@ -1451,6 +1467,58 @@ export default function LineCoachDisplay({ storeId }) {
           }
         `}</style>
         <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} />
+
+        <div
+          {...focusOrderHandlers}
+          style={{
+            position: 'relative',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+            touchAction: touchEnabled ? 'none' : 'auto',
+            transform: focusIsHolding ? 'scale(0.99)' : 'scale(1)',
+            transition: focusIsHolding ? 'none' : 'transform 120ms ease-out',
+          }}>
+          {/* Hold-to-bump progress strip — mirrors the card's gradient
+              fill, adapted for full-screen: a thin top bar that fills
+              left-to-right as the hold progresses. Only renders while
+              the user is actually holding. */}
+          {focusIsHolding && (
+            <div style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: '6px',
+              background: BRAND.charcoalDark,
+              zIndex: 20,
+              pointerEvents: 'none',
+            }}>
+              <div style={{
+                width: `${focusHoldPct * 100}%`,
+                height: '100%',
+                background: BRAND.green,
+                transition: 'none',
+              }} />
+            </div>
+          )}
+          {focusIsHolding && (
+            <div style={{
+              position: 'absolute',
+              top: '14px',
+              right: '14px',
+              background: BRAND.green,
+              color: BRAND.charcoalDark,
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              letterSpacing: '1.5px',
+              textTransform: 'uppercase',
+              fontSize: '0.95rem',
+              padding: '4px 12px',
+              borderRadius: '999px',
+              zIndex: 20,
+              pointerEvents: 'none',
+            }}>Hold to bump</div>
+          )}
 
         {allergyNote && (
           <div style={{
@@ -1699,6 +1767,7 @@ export default function LineCoachDisplay({ storeId }) {
               }}>—</div>
             )}
           </div>
+        </div>
         </div>
       </div>
     );
