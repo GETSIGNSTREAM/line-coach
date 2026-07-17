@@ -175,6 +175,31 @@ Auto-deploys from `main` branch on GitHub push.
   - `CRON_SECRET` — bearer secret for the Vercel cron routes (`cleanup`, `daily-recap`, `feedback-tips/generate`). Vercel sends it automatically when set.
   - `ANTHROPIC_API_KEY` — Claude API key for feedback-tips generation (`lib/feedback-tips.js`). Without it the generate route reports per-store errors and displays fall back to curated tips.
   - `LC_FEEDBACK_TIPS_MODEL` *(optional)* — override the generation model (default `claude-opus-4-8`; set `claude-sonnet-5` or `claude-haiku-4-5` to cut cost).
+  - `NOTION_API_KEY` — internal Notion integration secret for Learn-mode recipe sync (`lib/recipe-sync.js`).
+  - `NOTION_RECIPES_PAGE_ID` *(optional)* — override the Culinary OS page id if the Line Build Guides live elsewhere.
+  - `LC_RECIPE_SYNC_MODEL` *(optional)* — override the translation model for recipe sync.
+
+### Learn mode (Culinary OS → build steps → display)
+
+Learn mode walks new hires through numbered entree build steps: in focus
+mode the coaching panel becomes a BUILD STEPS walkthrough, and during slow
+periods the display rotates flash-card walkthroughs (photo + name + steps).
+Crew toggles it with the LEARN chip in the display header (per device);
+the per-store master switch lives in Admin → Settings → Learn Mode
+(default off — the chip is hidden until enabled).
+
+Content comes from the Culinary OS in Notion (Layer 3 Line Build Guides):
+
+1. Create an internal Notion integration (notion.so/my-integrations) and
+   set `NOTION_API_KEY` on Vercel.
+2. **Share the Culinary OS page with the integration** (page → ⋯ →
+   Connections) — without this every sync call 404s.
+3. Admin → Menu → **Sync from Notion**. The sync matches recipe titles to
+   menu item names (unmatched titles are listed in the result), extracts
+   the numbered steps from each build guide, and has Claude add Mexican
+   Spanish translations. It overwrites hand edits.
+4. Steps can also be hand-edited per item via Menu → Steps (N) — useful
+   before Notion is wired up or for one-off overrides between syncs.
 
 ### Feedback tips (Momos → Claude → display)
 

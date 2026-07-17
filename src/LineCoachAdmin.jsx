@@ -294,6 +294,31 @@ function validateMenuItems(arr) {
     if (accEn.trim() || accEs.trim()) {
       out.accuracy_note = { en: accEn, es: accEs };
     }
+    // Learn-mode build_steps — array of {en, es}. Without this, CSV
+    // import would silently wipe steps (this function rebuilds rows
+    // from known fields only). Accepts the object shape or flat
+    // newline-joined build_steps_en / build_steps_es CSV columns,
+    // paired index-wise.
+    if (Array.isArray(row.build_steps) && row.build_steps.length) {
+      out.build_steps = row.build_steps
+        .map((s) => (typeof s === 'string' ? { en: s, es: '' } : { en: String(s?.en || ''), es: String(s?.es || '') }))
+        .filter((s) => s.en.trim() || s.es.trim());
+      if (!out.build_steps.length) delete out.build_steps;
+    } else {
+      const stepsEn = row.build_steps_en ? String(row.build_steps_en).split('\n') : [];
+      const stepsEs = row.build_steps_es ? String(row.build_steps_es).split('\n') : [];
+      const stepCount = Math.max(stepsEn.length, stepsEs.length);
+      const steps = [];
+      for (let si = 0; si < stepCount; si++) {
+        const en = (stepsEn[si] || '').trim();
+        const es = (stepsEs[si] || '').trim();
+        if (en || es) steps.push({ en, es });
+      }
+      if (steps.length) out.build_steps = steps;
+    }
+    if (row.build_steps_synced_at && String(row.build_steps_synced_at).trim()) {
+      out.build_steps_synced_at = String(row.build_steps_synced_at).trim();
+    }
     return out;
   });
 }
@@ -316,7 +341,7 @@ function validateSides(arr) {
   });
 }
 
-const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category', 'image_url', 'coach_tip_en', 'coach_tip_es', 'accuracy_note_en', 'accuracy_note_es'];
+const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category', 'image_url', 'coach_tip_en', 'coach_tip_es', 'accuracy_note_en', 'accuracy_note_es', 'build_steps_en', 'build_steps_es'];
 
 // Flatten menu items so coach_tip / accuracy_note {en, es} round-trip
 // cleanly through the CSV (which has no nested-object support).
@@ -324,12 +349,17 @@ function flattenMenuItemsForCsv(items) {
   return (items || []).map((it) => {
     const tip = (it.coach_tip && typeof it.coach_tip === 'object') ? it.coach_tip : null;
     const acc = (it.accuracy_note && typeof it.accuracy_note === 'object') ? it.accuracy_note : null;
+    const steps = Array.isArray(it.build_steps) ? it.build_steps : [];
     return {
       ...it,
       coach_tip_en: tip ? (tip.en || '') : '',
       coach_tip_es: tip ? (tip.es || '') : '',
       accuracy_note_en: acc ? (acc.en || '') : '',
       accuracy_note_es: acc ? (acc.es || '') : '',
+      // Steps join on newline; csvEscape quotes them and parseCsv reads
+      // quoted newlines back, so the array round-trips.
+      build_steps_en: steps.map((s) => (typeof s === 'string' ? s : s?.en || '')).join('\n'),
+      build_steps_es: steps.map((s) => (typeof s === 'string' ? '' : s?.es || '')).join('\n'),
     };
   });
 }
@@ -617,6 +647,100 @@ function BgRemovalToggle({ checked, onChange }) {
   );
 }
 
+// Learn-mode build-steps editor. Steps are an ordered array of {en, es},
+// which doesn't fit the menu table's textarea-cell pattern — so a modal
+// with add/remove/reorder rows. Edits are local until Done, then flow
+// through the caller's updateConfig('menu_items') path (persisted by the
+// normal Save Changes bar, like every other menu edit).
+function StepsEditorModal({ item, onClose, onSave }) {
+  const initial = Array.isArray(item.build_steps)
+    ? item.build_steps.map((s) => (typeof s === 'string' ? { en: s, es: '' } : { en: s?.en || '', es: s?.es || '' }))
+    : [];
+  const [steps, setSteps] = useState(initial.length ? initial : [{ en: '', es: '' }]);
+
+  const setStep = (i, field, value) => {
+    setSteps((prev) => prev.map((s, idx) => (idx === i ? { ...s, [field]: value } : s)));
+  };
+  const move = (i, dir) => {
+    setSteps((prev) => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+  const remove = (i) => setSteps((prev) => prev.filter((_, idx) => idx !== i));
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onClose}
+    >
+      <div
+        style={{ ...styles.panel, width: 'min(860px, 92vw)', maxHeight: '85vh', overflowY: 'auto', margin: 0 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: '1.1rem', letterSpacing: '2px', color: BRAND.gold, textTransform: 'uppercase', marginBottom: '6px' }}>
+          Build Steps — {item.name || '(unnamed item)'}
+        </div>
+        <div style={{ color: `${BRAND.cream}90`, fontSize: '0.8rem', marginBottom: '14px' }}>
+          Shown on the display in Learn mode, in order.{' '}
+          {item.build_steps_synced_at
+            ? `Last synced from Notion ${new Date(item.build_steps_synced_at).toLocaleString()} — the next sync overwrites edits made here.`
+            : 'Hand-entered — the next "Sync from Notion" overwrites these if the Recipe OS has a matching build guide.'}
+        </div>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={{ ...styles.th, width: '36px' }}>#</th>
+              <th style={styles.th}>English</th>
+              <th style={styles.th}>Español</th>
+              <th style={{ ...styles.th, width: '150px' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {steps.map((step, i) => (
+              <tr key={i}>
+                <td style={{ ...styles.td, color: BRAND.gold, fontWeight: 700, textAlign: 'center' }}>{i + 1}</td>
+                <td style={styles.td}>
+                  <textarea style={{ ...styles.textarea, marginBottom: 0, minHeight: '48px' }} rows={2}
+                    placeholder="e.g. Lay the tortilla flat and add rice first"
+                    value={step.en} onChange={(e) => setStep(i, 'en', e.target.value)} />
+                </td>
+                <td style={styles.td}>
+                  <textarea style={{ ...styles.textarea, marginBottom: 0, minHeight: '48px' }} rows={2}
+                    placeholder="Optional — leave blank for English only"
+                    value={step.es} onChange={(e) => setStep(i, 'es', e.target.value)} />
+                </td>
+                <td style={styles.td}>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button style={styles.btnSecondary} disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+                    <button style={styles.btnSecondary} disabled={i === steps.length - 1} onClick={() => move(i, 1)}>↓</button>
+                    <button style={styles.btnSecondary} onClick={() => remove(i)}>✕</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button style={{ ...styles.btnSecondary, marginTop: '10px' }} onClick={() => setSteps((prev) => [...prev, { en: '', es: '' }])}>
+          + Add Step
+        </button>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+          <button style={styles.btnSecondary} onClick={onClose}>Cancel</button>
+          <button style={styles.btn} onClick={() => {
+            const cleaned = steps
+              .map((s) => ({ en: s.en.trim(), es: s.es.trim() }))
+              .filter((s) => s.en || s.es);
+            onSave(cleaned);
+          }}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // All WILDBIRD store slugs in the order the hub presents them.
 // Used by the admin store-picker dropdown.
 const STORE_OPTIONS = [
@@ -691,6 +815,11 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   const [feedbackTipsLoading, setFeedbackTipsLoading] = useState(false);
   const [regenBusy, setRegenBusy] = useState(false);
   const [regenMsg, setRegenMsg] = useState('');
+  // Learn mode — build-steps editor modal (index into menu_items, null =
+  // closed) and the Notion Recipe OS sync button state.
+  const [stepsEditorIndex, setStepsEditorIndex] = useState(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
   const [maintStats, setMaintStats] = useState(null);
   const [maintMsg, setMaintMsg] = useState('');
   const [maintBusy, setMaintBusy] = useState(false);
@@ -962,6 +1091,42 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     if (token && activeTab === 'Feedback Tips') loadFeedbackTips();
   }, [token, activeTab, loadWebhookLogs, loadHealth, loadAnalytics, loadTicketTimes, loadShiftSummary, loadItemPerf, loadDiningGuids, loadMaintenance, loadFeedbackTips]);
 
+  // Learn mode: pull build steps from the Notion Culinary OS (Layer 3
+  // Line Build Guides) into menu_items[].build_steps. Server-side write —
+  // afterwards we re-fetch config so the table shows the synced steps.
+  async function syncFromNotion() {
+    if (dirty && !window.confirm('You have unsaved changes. Syncing reloads the config from the server and discards them. Continue?')) {
+      return;
+    }
+    setSyncMsg('');
+    setSyncBusy(true);
+    try {
+      const res = await fetch('/api/line-coach/recipe-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+      });
+      const json = await res.json();
+      if (res.ok && json.status === 'ok') {
+        const parts = [`Synced ${json.matched} of ${json.recipes_found} recipes`];
+        if (json.unmatched_recipes?.length) parts.push(`unmatched: ${json.unmatched_recipes.join(', ')}`);
+        if (json.no_steps?.length) parts.push(`no steps found: ${json.no_steps.join(', ')}`);
+        if (json.errors?.length) parts.push(`errors: ${json.errors.length}`);
+        setSyncMsg(parts.join(' · '));
+        const slugForConfig = storeId || STORE_OPTIONS[0].slug;
+        const cfgRes = await fetch(`/api/line-coach/config?store=${slugForConfig}`);
+        if (cfgRes.ok) {
+          setConfig(await cfgRes.json());
+          setDirty(false);
+        }
+      } else {
+        setSyncMsg(`Error: ${json.error || res.status}`);
+      }
+    } catch (err) { setSyncMsg(`Error: ${err.message}`); }
+    setSyncBusy(false);
+    setTimeout(() => setSyncMsg(''), 15000);
+  }
+
   async function regenerateFeedbackTips() {
     if (!storeId) return;
     setRegenMsg('');
@@ -1107,14 +1272,20 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
             <input type="file" accept=".csv,text/csv" style={{ display: 'none' }}
               onChange={importCsvFor('menu_items', validateMenuItems)} />
           </label>
+          <button style={styles.btn} onClick={syncFromNotion} disabled={syncBusy}>
+            {syncBusy ? 'Syncing…' : 'Sync from Notion'}
+          </button>
           {importMsg && (
             <span style={{ marginLeft: '8px', color: importMsg.startsWith('Import failed') ? BRAND.red : BRAND.green, fontSize: '0.85rem' }}>{importMsg}</span>
+          )}
+          {syncMsg && (
+            <span style={{ marginLeft: '8px', color: syncMsg.startsWith('Error') ? BRAND.red : BRAND.green, fontSize: '0.85rem' }}>{syncMsg}</span>
           )}
           <span style={{ flex: 1 }} />
           <BgRemovalToggle checked={removeBgOnUpload} onChange={setRemoveBgOnUpload} />
         </div>
         <div style={{ fontSize: '0.75rem', color: `${BRAND.cream}80`, marginBottom: '12px' }}>
-          Headers: <code>name, station, cook_time, category, coach_tip_en, coach_tip_es, accuracy_note_en, accuracy_note_es</code> · Edit in Excel/Sheets, save as CSV, then re-import.
+          Headers: <code>name, station, cook_time, category, coach_tip_en, coach_tip_es, accuracy_note_en, accuracy_note_es, build_steps_en, build_steps_es</code> (steps: one per line inside the cell) · Edit in Excel/Sheets, save as CSV, then re-import. &ldquo;Sync from Notion&rdquo; pulls Learn-mode build steps from the Culinary OS Line Build Guides and overwrites hand edits.
         </div>
         <div style={{ fontSize: '0.8rem', color: BRAND.cream, marginBottom: '12px', padding: '8px 12px', background: `${BRAND.gold}15`, borderLeft: `3px solid ${BRAND.gold}`, borderRadius: '3px' }}>
           <strong style={{ color: BRAND.gold }}>Coach Tips:</strong> Shown on the kitchen display when only this dish is on the board (focus mode). Use to reinforce quality standards specific to this entree. Spanish is optional.
@@ -1130,6 +1301,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
               <th style={styles.th}>Coach Tip (ES)</th>
               <th style={styles.th}>Accuracy Note (EN)</th>
               <th style={styles.th}>Accuracy Note (ES)</th>
+              <th style={{ ...styles.th, width: '110px' }}>Build Steps</th>
               <th style={{ ...styles.th, width: '90px' }}>Actions</th>
             </tr>
           </thead>
@@ -1224,6 +1396,16 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
                     />
                   </td>
                   <td style={styles.td}>
+                    {(() => {
+                      const stepCount = Array.isArray(item.build_steps) ? item.build_steps.length : 0;
+                      return (
+                        <button style={styles.btnSecondary} onClick={() => setStepsEditorIndex(i)}>
+                          {stepCount > 0 ? `Steps (${stepCount})` : 'Steps'}
+                        </button>
+                      );
+                    })()}
+                  </td>
+                  <td style={styles.td}>
                     <button style={styles.btnSecondary} onClick={() => { updateConfig('menu_items', items.filter((_, idx) => idx !== i)); }}>Remove</button>
                   </td>
                 </tr>
@@ -1235,6 +1417,21 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           onClick={() => { updateConfig('menu_items', [...items, { name: '', station: 'line', cook_time: 4 }]); }}>
           + Add Item
         </button>
+        {stepsEditorIndex != null && items[stepsEditorIndex] && (
+          <StepsEditorModal
+            item={items[stepsEditorIndex]}
+            onClose={() => setStepsEditorIndex(null)}
+            onSave={(steps) => {
+              const u = [...items];
+              const next = { ...items[stepsEditorIndex] };
+              if (steps.length > 0) next.build_steps = steps;
+              else { delete next.build_steps; delete next.build_steps_synced_at; }
+              u[stepsEditorIndex] = next;
+              updateConfig('menu_items', u);
+              setStepsEditorIndex(null);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -1676,6 +1873,13 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
             value={settings.quality_coach_interval || 30}
             onChange={(e) => { updateConfig('settings', { ...settings, quality_coach_interval: parseInt(e.target.value) || 30 }); }} />
           <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>seconds between tips</span>
+        </div>
+        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Learn Mode:</label>
+          <input type="checkbox"
+            checked={settings.learn_mode_enabled === true}
+            onChange={(e) => { updateConfig('settings', { ...settings, learn_mode_enabled: e.target.checked }); }} />
+          <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>show the LEARN toggle on the kitchen display (new-hire build-step walkthroughs)</span>
         </div>
         <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Customer Feedback Tips:</label>
