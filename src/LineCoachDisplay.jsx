@@ -17,6 +17,16 @@ function normalizeTip(tip) {
   return { en: '', es: '' };
 }
 
+// Normalize a menu item's build_steps (Learn mode) into { en, es }
+// steps in assembly order. Mirrors lib/line-coach.js so the client
+// doesn't pull in server-only deps.
+function normalizeSteps(steps) {
+  if (!Array.isArray(steps)) return [];
+  return steps
+    .map(normalizeTip)
+    .filter((s) => (s.en && s.en.trim()) || (s.es && s.es.trim()));
+}
+
 // Round-robin spread feedback tips through the curated rotation so
 // customer-feedback cards surface regularly instead of clumping at the
 // end (e.g. 16 curated + 4 feedback → one feedback card every 4 curated).
@@ -480,6 +490,30 @@ export default function LineCoachDisplay({ storeId }) {
       return next;
     });
   }
+
+  // Learn mode (new-hire build-step walkthroughs). Per-device toggle
+  // persisted like lc-language; the admin's per-store master switch
+  // (settings.learn_mode_enabled) gates it entirely — when off, the
+  // header button disappears and stale localStorage is harmless.
+  // SSR-safe: starts false, resolved post-mount.
+  const [learnMode, setLearnMode] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      setLearnMode(window.localStorage.getItem('lc-learn-mode') === '1');
+    } catch { /* localStorage blocked — stays off */ }
+  }, []);
+
+  function toggleLearnMode() {
+    setLearnMode((prev) => {
+      const next = !prev;
+      try { window.localStorage.setItem('lc-learn-mode', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }
+
+  const learnModeAllowed = config?.settings?.learn_mode_enabled === true;
+  const learnModeOn = learnModeAllowed && learnMode;
 
   // Shift counter for Quality Coach mode (slow period only). Fetches
   // today's stats once when the kitchen goes quiet, then every 5 min
@@ -1326,6 +1360,107 @@ export default function LineCoachDisplay({ storeId }) {
   }
 
 
+  // ── Learn mode walkthroughs (slow period) ───────────
+  // While LEARN is on, quiet periods become a training session: the
+  // rotation cycles through every entree that has build steps —
+  // photo, name, numbered steps — replacing the tips rotation (a
+  // trainee shouldn't wait 30s between relevant cards). Rides the
+  // existing qualityTipIndex / quality_coach_interval cadence. Zero
+  // items with steps → falls through to the normal tips branch.
+
+  const learnItems = learnModeOn
+    ? menuItems
+        .map((m) => ({ ...m, steps: normalizeSteps(m.build_steps) }))
+        .filter((m) => m.steps.length > 0)
+    : [];
+
+  if (isSlowPeriod && learnItems.length > 0) {
+    const learnItem = learnItems[qualityTipIndex % learnItems.length];
+    const manySteps = learnItem.steps.length > 6;
+    return (
+      <div style={s.container}>
+        <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} />
+        <div style={s.qualityCoach}>
+          <div style={{ ...s.qualityLabel, color: BRAND.blue }}>
+            {language === 'es' ? 'MODO APRENDIZAJE' : 'LEARN MODE'}
+          </div>
+          <div key={`learn-${qualityTipIndex}-${language}`} style={{
+            display: 'flex',
+            gap: 'clamp(24px, 4vw, 64px)',
+            alignItems: 'flex-start',
+            justifyContent: 'center',
+            maxWidth: '90vw',
+            marginTop: '3vh',
+            animation: 'lcQualityFade 400ms ease-out',
+          }}>
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh' }}>
+              <FoodPhoto
+                src={getSideImageUrl(learnItem.name, menuItems, configSides)}
+                alt={learnItem.name}
+                style={{ width: '28vh', height: '28vh', borderRadius: '14px' }}
+              />
+              <div style={{
+                fontFamily: "'Oswald', sans-serif",
+                fontWeight: 700,
+                fontSize: 'clamp(1.2rem, 2vw, 2rem)',
+                color: BRAND.bone,
+                letterSpacing: '2px',
+                textTransform: 'uppercase',
+                textAlign: 'center',
+                maxWidth: '30vh',
+              }}>{learnItem.name}</div>
+            </div>
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: manySteps ? '10px' : '16px',
+              maxHeight: '62vh',
+              overflowY: 'auto',
+              minWidth: 0,
+            }}>
+              {learnItem.steps.map((step, si) => {
+                const stepText = pickTipText(step, language);
+                if (!stepText) return null;
+                return (
+                  <div key={si} style={{ display: 'flex', gap: '16px', alignItems: 'baseline', textAlign: 'left' }}>
+                    <span style={{
+                      flexShrink: 0,
+                      minWidth: '1.8em',
+                      color: BRAND.blue,
+                      fontFamily: "'Oswald', sans-serif",
+                      fontWeight: 700,
+                      fontSize: manySteps ? 'clamp(1.1rem, 1.6vw, 1.6rem)' : 'clamp(1.3rem, 2vw, 2rem)',
+                    }}>{si + 1}.</span>
+                    <span style={{
+                      fontSize: manySteps ? 'clamp(1.1rem, 1.7vw, 1.7rem)' : 'clamp(1.3rem, 2.1vw, 2.1rem)',
+                      color: language === 'en' ? BRAND.bone : BRAND.cream,
+                      fontFamily: "'Playfair Display', Georgia, serif",
+                      lineHeight: 1.35,
+                      fontStyle: language === 'es' ? 'italic' : 'normal',
+                    }}>{stepText}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          {learnItems.length > 1 && (
+            <div style={{
+              marginTop: '3vh',
+              color: `${BRAND.cream}80`,
+              fontFamily: "'Oswald', sans-serif",
+              fontSize: 'clamp(0.8rem, 1vw, 1rem)',
+              letterSpacing: '2px',
+              textTransform: 'uppercase',
+            }}>
+              {(qualityTipIndex % learnItems.length) + 1} / {learnItems.length}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // ── Quality Coach mode ──────────────────────────────
 
   if (isSlowPeriod && tips.length > 0) {
@@ -1363,7 +1498,7 @@ export default function LineCoachDisplay({ storeId }) {
     return (
       <div style={s.container}>
         <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} />
+        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} />
         <div style={s.qualityCoach}>
           <div style={{ ...s.qualityLabel, ...(isFeedbackTip ? { color: BRAND.terracotta } : {}) }}>{tipLabel}</div>
           <div style={s.qualityTipBlock} key={`${qualityTipIndex}-${language}`}>
@@ -1486,6 +1621,11 @@ export default function LineCoachDisplay({ storeId }) {
     // halves of the tip are empty — caller renders the "—" empty
     // state instead.
     const tipText = pickTipText(tipToShow, language);
+    // Learn mode: the coaching panel becomes a numbered build walkthrough
+    // for the focused entree. Items without steps fall back to the
+    // normal coach-tip path so the panel is never blank.
+    const primarySteps = learnModeOn ? normalizeSteps(primaryMenu?.build_steps) : [];
+    const showBuildSteps = primarySteps.length > 0;
 
     const ticketBorderColor = order.priority === 'rush' ? BRAND.red : order.ticketColor;
     const diningColors = {
@@ -1524,7 +1664,7 @@ export default function LineCoachDisplay({ storeId }) {
             to   { opacity: 1; transform: scale(1);    }
           }
         `}</style>
-        <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} />
+        <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} />
 
         <div
           {...focusOrderHandlers}
@@ -1653,7 +1793,7 @@ export default function LineCoachDisplay({ storeId }) {
         {/* Two-column body: photo + coach tip ─────────── */}
         {/* `key` includes the rotating item index so each rotation
             re-mounts the block and triggers the fade-in animation. */}
-        <div key={`focus-${focusItemIndex % itemCount}-${language}`} style={{
+        <div key={`focus-${focusItemIndex % itemCount}-${language}-${learnModeOn ? 'learn' : 'coach'}`} style={{
           display: 'flex',
           gap: '24px',
           padding: '16px',
@@ -1784,7 +1924,9 @@ export default function LineCoachDisplay({ storeId }) {
                 fontWeight: 700,
                 letterSpacing: '4px',
               }}>
-                {primaryCoachTip && (primaryCoachTip.en || primaryCoachTip.es) ? 'COACH' : 'QUALITY COACH'}
+                {showBuildSteps
+                  ? (language === 'es' ? 'PASOS DE PREPARACIÓN' : 'BUILD STEPS')
+                  : (primaryCoachTip && (primaryCoachTip.en || primaryCoachTip.es) ? 'COACH' : 'QUALITY COACH')}
               </div>
               {/* Rotation dots — only show when there's more than one item
                   so the cook knows the panel cycles through every dish. */}
@@ -1806,7 +1948,37 @@ export default function LineCoachDisplay({ storeId }) {
                 English in Playfair bone, Spanish in Playfair italic
                 cream — same visual language as the Quality Coach
                 + side quick-tip surfaces. */}
-            {tipText && (
+            {showBuildSteps ? (
+              // Numbered build walkthrough. Font scales down past 6 steps
+              // so a long build stays fully visible (a wall display can't
+              // be scrolled mid-cook); overflowY is the safety net for
+              // extreme lists.
+              <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>
+                {primarySteps.map((step, si) => {
+                  const stepText = pickTipText(step, language);
+                  if (!stepText) return null;
+                  return (
+                    <div key={si} style={{ display: 'flex', gap: '14px', alignItems: 'baseline' }}>
+                      <span style={{
+                        flexShrink: 0,
+                        minWidth: '1.8em',
+                        color: BRAND.gold,
+                        fontFamily: "'Oswald', sans-serif",
+                        fontWeight: 700,
+                        fontSize: primarySteps.length > 6 ? 'clamp(1rem, 1.4vw, 1.4rem)' : 'clamp(1.2rem, 1.7vw, 1.7rem)',
+                      }}>{si + 1}.</span>
+                      <span style={{
+                        fontSize: primarySteps.length > 6 ? 'clamp(1rem, 1.5vw, 1.5rem)' : 'clamp(1.2rem, 1.8vw, 1.8rem)',
+                        color: language === 'en' ? BRAND.bone : BRAND.cream,
+                        fontFamily: "'Playfair Display', Georgia, serif",
+                        lineHeight: 1.3,
+                        fontStyle: language === 'es' ? 'italic' : 'normal',
+                      }}>{stepText}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : tipText ? (
               <div style={{
                 fontSize: language === 'en' ? 'clamp(1.6rem, 2.6vw, 2.6rem)' : 'clamp(1.4rem, 2.3vw, 2.3rem)',
                 color: language === 'en' ? BRAND.bone : BRAND.cream,
@@ -1814,8 +1986,7 @@ export default function LineCoachDisplay({ storeId }) {
                 lineHeight: 1.3,
                 fontStyle: language === 'es' ? 'italic' : 'normal',
               }}>{tipText}</div>
-            )}
-            {!tipText && (
+            ) : (
               <div style={{
                 fontSize: 'clamp(1.2rem, 1.6vw, 1.6rem)',
                 color: BRAND.cream,
@@ -1878,7 +2049,7 @@ export default function LineCoachDisplay({ storeId }) {
           to   { opacity: 1; }
         }
       `}</style>
-      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} />
+      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} />
       {bumpedToast && (
         <UndoToast orderNum={bumpedToast.orderNum} onUndo={handleUndo} />
       )}
@@ -2912,7 +3083,7 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
   );
 }
 
-function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle }) {
+function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, learnAllowed = false, learnMode = false, onLearnToggle }) {
   return (
     <div style={s.header}>
       <div style={s.headerLeft}>
@@ -2954,6 +3125,37 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle })
         )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {learnAllowed && onLearnToggle && (
+          // Learn-mode chip (new-hire build-step walkthroughs). Only
+          // rendered when the store's master switch is on. Active state
+          // is the sole solid-gold element in the header so a trainer
+          // can confirm the mode from across the kitchen.
+          <button
+            type="button"
+            onClick={onLearnToggle}
+            aria-label={`Toggle learn mode (currently ${learnMode ? 'on' : 'off'})`}
+            title={learnMode ? 'Learn mode on · tap to turn off' : 'Learn mode off · tap for build-step walkthroughs'}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '999px',
+              background: learnMode ? BRAND.gold : 'transparent',
+              color: learnMode ? BRAND.charcoal : `${BRAND.gold}AA`,
+              border: learnMode ? 'none' : `1px solid ${BRAND.gold}55`,
+              fontSize: '0.8rem',
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              letterSpacing: '2px',
+              cursor: 'pointer',
+              minHeight: '44px',
+              minWidth: '64px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            LEARN
+          </button>
+        )}
         {language && onLanguageToggle && (
           // Language toggle chip. Uppercase = active language.
           // Touch target ≥44px height via padding so a greasy-handed
