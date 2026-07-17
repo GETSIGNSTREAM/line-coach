@@ -163,7 +163,7 @@ const styles = {
   deviceOffline: { color: `${BRAND.cream}60`, fontSize: '0.8rem' },
 };
 
-const TABS = ['Menu', 'Sides', 'Tips', 'Hold Times', 'Service Hours', 'Dining Options', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Shift Summary', 'Item Performance', 'Maintenance'];
+const TABS = ['Menu', 'Sides', 'Tips', 'Feedback Tips', 'Hold Times', 'Service Hours', 'Dining Options', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Shift Summary', 'Item Performance', 'Maintenance'];
 
 const ALLOWED_STATIONS = ['oven', 'grill', 'fryer', 'line', 'cold', 'hot_hold', 'grab'];
 
@@ -636,7 +636,7 @@ const STORE_OPTIONS = [
 // "all stores", which is useful for checking Toast routing.)
 // Shift Summary is per-store (date + store); Item Performance is
 // brand-wide (it has its own all-stores / specific-store toggle).
-const PER_STORE_TABS = new Set(['Settings', 'Devices', 'Analytics', 'Shift Summary']);
+const PER_STORE_TABS = new Set(['Feedback Tips', 'Settings', 'Devices', 'Analytics', 'Shift Summary']);
 
 export default function LineCoachAdmin({ storeId: initialStoreId }) {
   // storeId is now LOCAL state, hydrated from the URL prop. The header
@@ -684,6 +684,13 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   // through the existing dining_option_labels BRAND_FIELD path).
   const [diningGuids, setDiningGuids] = useState(null);
   const [diningGuidsLoading, setDiningGuidsLoading] = useState(false);
+  // Feedback Tips tab — machine-generated tips from Momos reviews
+  // (read-only view + "Regenerate now"). feedbackTips holds the store's
+  // lc_feedback_tips row; regenMsg mirrors the maintMsg auto-clear pattern.
+  const [feedbackTips, setFeedbackTips] = useState(null);
+  const [feedbackTipsLoading, setFeedbackTipsLoading] = useState(false);
+  const [regenBusy, setRegenBusy] = useState(false);
+  const [regenMsg, setRegenMsg] = useState('');
   const [maintStats, setMaintStats] = useState(null);
   const [maintMsg, setMaintMsg] = useState('');
   const [maintBusy, setMaintBusy] = useState(false);
@@ -853,6 +860,22 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     setTicketTimesLoading(false);
   }, [token, storeId]);
 
+  const loadFeedbackTips = useCallback(async () => {
+    if (!storeId) {
+      setFeedbackTips(null);
+      return;
+    }
+    setFeedbackTipsLoading(true);
+    try {
+      const res = await fetch(`/api/line-coach/feedback-tips?store=${storeId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setFeedbackTips(await res.json());
+      else setFeedbackTips(null);
+    } catch { setFeedbackTips(null); }
+    setFeedbackTipsLoading(false);
+  }, [token, storeId]);
+
   const loadMaintenance = useCallback(async () => {
     setMaintBusy(true);
     try {
@@ -936,7 +959,34 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     if (token && activeTab === 'Item Performance') loadItemPerf();
     if (token && activeTab === 'Dining Options') loadDiningGuids();
     if (token && activeTab === 'Maintenance') loadMaintenance();
-  }, [token, activeTab, loadWebhookLogs, loadHealth, loadAnalytics, loadTicketTimes, loadShiftSummary, loadItemPerf, loadDiningGuids, loadMaintenance]);
+    if (token && activeTab === 'Feedback Tips') loadFeedbackTips();
+  }, [token, activeTab, loadWebhookLogs, loadHealth, loadAnalytics, loadTicketTimes, loadShiftSummary, loadItemPerf, loadDiningGuids, loadMaintenance, loadFeedbackTips]);
+
+  async function regenerateFeedbackTips() {
+    if (!storeId) return;
+    setRegenMsg('');
+    setRegenBusy(true);
+    try {
+      const res = await fetch('/api/line-coach/feedback-tips', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ store: storeId }),
+      });
+      const json = await res.json();
+      if (res.ok && json.status === 'generated') {
+        setRegenMsg(`Generated ${json.tipCount} tips from ${json.reviewCount} reviews`);
+      } else if (res.ok && json.status === 'skipped_insufficient') {
+        setRegenMsg(`Not enough recent reviews (${json.reviewCount ?? 0}) — tips cleared`);
+      } else if (res.ok && json.status === 'disabled') {
+        setRegenMsg('Feedback tips are disabled for this store (Settings tab)');
+      } else {
+        setRegenMsg(`Error: ${json.error || res.status}`);
+      }
+      await loadFeedbackTips();
+    } catch (err) { setRegenMsg(`Error: ${err.message}`); }
+    setRegenBusy(false);
+    setTimeout(() => setRegenMsg(''), 8000);
+  }
 
   function importCsvFor(key, validator) {
     return (e) => {
@@ -1348,6 +1398,75 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     );
   }
 
+  function renderFeedbackTipsTab() {
+    const row = feedbackTips;
+    const tips = Array.isArray(row?.tips) ? row.tips : [];
+    const windowLabel = row?.window_start && row?.window_end
+      ? `${new Date(row.window_start).toLocaleDateString()} – ${new Date(row.window_end).toLocaleDateString()}`
+      : null;
+    return (
+      <div style={styles.panel}>
+        <p style={{ color: BRAND.cream, marginTop: 0 }}>
+          Customer feedback tips are generated automatically each morning from
+          this store&apos;s recent Momos reviews and blended into the slow-period
+          rotation, labeled <strong>CUSTOMER FEEDBACK</strong> on the display.
+          They&apos;re machine-written — regenerate them here instead of editing.
+          Displays pick up changes on their next hourly config refresh. The
+          per-store on/off switch lives in the Settings tab.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+          <button style={styles.btn} onClick={regenerateFeedbackTips} disabled={regenBusy}>
+            {regenBusy ? 'Generating…' : 'Regenerate Now'}
+          </button>
+          <button style={styles.btnSecondary} onClick={loadFeedbackTips} disabled={feedbackTipsLoading}>
+            Refresh
+          </button>
+          {regenMsg && (
+            <span style={{ color: regenMsg.startsWith('Error') ? BRAND.red : BRAND.green }}>{regenMsg}</span>
+          )}
+        </div>
+        {row?.generated_at && (
+          <div style={{ color: BRAND.cream, fontSize: '0.85rem', marginBottom: '12px' }}>
+            Generated {new Date(row.generated_at).toLocaleString()} from {row.review_count} reviews
+            {row.avg_rating != null && <> · avg rating {row.avg_rating}★</>}
+            {windowLabel && <> · window {windowLabel}</>}
+            {row.model && <> · {row.model}</>}
+          </div>
+        )}
+        {feedbackTipsLoading ? (
+          <div style={{ color: BRAND.cream }}>Loading…</div>
+        ) : tips.length === 0 ? (
+          <div style={{ color: BRAND.cream }}>
+            No feedback tips yet — either generation hasn&apos;t run for this store,
+            or there weren&apos;t enough recent reviews. The display falls back to the
+            curated quality tips.
+          </div>
+        ) : (
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={{ ...styles.th, width: '40px' }}>#</th>
+                <th style={styles.th}>English</th>
+                <th style={styles.th}>Español</th>
+                <th style={styles.th}>Customer quote</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tips.map((tip, i) => (
+                <tr key={i}>
+                  <td style={{ ...styles.td, color: BRAND.gold, fontWeight: 700, textAlign: 'center' }}>{i + 1}</td>
+                  <td style={styles.td}>{tip.en}</td>
+                  <td style={styles.td}>{tip.es}</td>
+                  <td style={{ ...styles.td, fontStyle: 'italic', opacity: 0.8 }}>{tip.source_quote || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  }
+
   function renderHoldTimesTab() {
     // Merge with defaults so newly-introduced keys appear in the UI even
     // if the stored config predates them. Defaults match lib/line-coach.js
@@ -1557,6 +1676,13 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
             value={settings.quality_coach_interval || 30}
             onChange={(e) => { updateConfig('settings', { ...settings, quality_coach_interval: parseInt(e.target.value) || 30 }); }} />
           <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>seconds between tips</span>
+        </div>
+        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Customer Feedback Tips:</label>
+          <input type="checkbox"
+            checked={settings.feedback_tips_enabled !== false}
+            onChange={(e) => { updateConfig('settings', { ...settings, feedback_tips_enabled: e.target.checked }); }} />
+          <span style={{ color: BRAND.cream, fontSize: '0.85rem' }}>blend Momos review tips into the slow-period rotation</span>
         </div>
         <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <label style={{ width: '200px', fontWeight: 600, fontFamily: "'Oswald', sans-serif" }}>Side Batch Threshold:</label>
@@ -2415,7 +2541,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     );
   }
 
-  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Hold Times': renderHoldTimesTab, 'Service Hours': renderServiceHoursTab, 'Dining Options': renderDiningOptionsTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, 'Shift Summary': renderShiftSummaryTab, 'Item Performance': renderItemPerfTab, Maintenance: renderMaintenanceTab };
+  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Feedback Tips': renderFeedbackTipsTab, 'Hold Times': renderHoldTimesTab, 'Service Hours': renderServiceHoursTab, 'Dining Options': renderDiningOptionsTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, 'Shift Summary': renderShiftSummaryTab, 'Item Performance': renderItemPerfTab, Maintenance: renderMaintenanceTab };
 
   return (
     <div style={styles.container}>

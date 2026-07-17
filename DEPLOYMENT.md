@@ -172,6 +172,25 @@ Auto-deploys from `main` branch on GitHub push.
   - `JWT_SECRET`
   - `TOAST_WEBHOOK_SECRET`
   - `ADMIN_PASSWORD` — shared admin-panel password. The login box posts it to `/api/line-coach/admin-login`, which returns a 30-day admin JWT. Rotate it to force all admins to re-login.
+  - `CRON_SECRET` — bearer secret for the Vercel cron routes (`cleanup`, `daily-recap`, `feedback-tips/generate`). Vercel sends it automatically when set.
+  - `ANTHROPIC_API_KEY` — Claude API key for feedback-tips generation (`lib/feedback-tips.js`). Without it the generate route reports per-store errors and displays fall back to curated tips.
+  - `LC_FEEDBACK_TIPS_MODEL` *(optional)* — override the generation model (default `claude-opus-4-8`; set `claude-sonnet-5` or `claude-haiku-4-5` to cut cost).
+
+### Feedback tips (Momos → Claude → display)
+
+A daily cron (12:00 UTC, an hour before the daily recap) reads each store's
+last 14 days of Momos reviews from this Supabase project, has Claude write
+short bilingual reminders (coaching + positive reinforcement), and stores
+them in `lc_feedback_tips`. Displays blend them into the slow-period
+rotation labeled **CUSTOMER FEEDBACK**. Setup:
+
+1. Run `scripts/add-feedback-tips.sql` in the Supabase SQL editor.
+2. Confirm the Momos table/column names and location→slug map at the top of
+   `lib/momos.js` against the live schema (placeholders until verified).
+3. Set `ANTHROPIC_API_KEY` on Vercel.
+4. Manual test: `curl -H "Authorization: Bearer $CRON_SECRET" "https://wildbird.coach/api/line-coach/feedback-tips/generate?store=hollywood&dry=1"`.
+   Admins can also use **Feedback Tips → Regenerate Now** per store; the
+   per-store on/off toggle is in **Settings**.
 
 ---
 

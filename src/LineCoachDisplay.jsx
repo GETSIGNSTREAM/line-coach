@@ -17,6 +17,23 @@ function normalizeTip(tip) {
   return { en: '', es: '' };
 }
 
+// Round-robin spread feedback tips through the curated rotation so
+// customer-feedback cards surface regularly instead of clumping at the
+// end (e.g. 16 curated + 4 feedback → one feedback card every 4 curated).
+function interleaveTips(curated, feedback) {
+  if (feedback.length === 0) return curated;
+  if (curated.length === 0) return feedback;
+  const stride = Math.max(1, Math.ceil(curated.length / feedback.length));
+  const out = [];
+  let f = 0;
+  for (let i = 0; i < curated.length; i++) {
+    out.push(curated[i]);
+    if ((i + 1) % stride === 0 && f < feedback.length) out.push(feedback[f++]);
+  }
+  while (f < feedback.length) out.push(feedback[f++]);
+  return out;
+}
+
 // Pick the chosen-language string from a normalized tip, falling back
 // silently to the other language when the chosen one is empty. Used by
 // every bilingual render site so the language toggle behaves
@@ -499,10 +516,16 @@ export default function LineCoachDisplay({ storeId }) {
   }, []);
 
   useEffect(() => {
-    fetch(`/api/line-coach/config?store=${storeId}`)
-      .then((r) => r.json())
-      .then(setConfig)
-      .catch(console.error);
+    const fetchConfig = () =>
+      fetch(`/api/line-coach/config?store=${storeId}`)
+        .then((r) => r.json())
+        .then(setConfig)
+        .catch(console.error);
+    fetchConfig();
+    // Kiosks run unattended for days — re-poll hourly so daily-generated
+    // feedback tips and admin config edits land without a reload.
+    const interval = setInterval(fetchConfig, 60 * 60_000);
+    return () => clearInterval(interval);
   }, [storeId]);
 
   const fetchOrders = useCallback(() => {
@@ -1035,10 +1058,27 @@ export default function LineCoachDisplay({ storeId }) {
   const configSides = config?.sides || [];
   // Bilingual tips: array of { en, es }. Filter out fully empty tips so
   // the rotation never lands on a blank screen, and so legacy string-only
-  // configs continue to work via normalizeTip.
-  const tips = (config?.quality_tips || [])
+  // configs continue to work via normalizeTip. Two sources feed one
+  // rotation: brand-wide curated quality_tips, and per-store feedback_tips
+  // generated from Momos customer reviews. Each tip carries a `source`
+  // tag so the Quality Coach view can label where it came from —
+  // normalizeTip only keeps { en, es }, so tags attach after normalizing.
+  const hasTipText = (t) => (t.en && t.en.trim()) || (t.es && t.es.trim());
+  const curatedTips = (config?.quality_tips || [])
     .map(normalizeTip)
-    .filter((t) => (t.en && t.en.trim()) || (t.es && t.es.trim()));
+    .filter(hasTipText)
+    .map((t) => ({ ...t, source: 'quality' }));
+  const feedbackTipsEnabled = config?.settings?.feedback_tips_enabled !== false;
+  const feedbackTips = feedbackTipsEnabled
+    ? (config?.feedback_tips || [])
+        .map((raw) => ({
+          ...normalizeTip(raw),
+          source: 'feedback',
+          source_quote: raw && typeof raw.source_quote === 'string' ? raw.source_quote.trim() : '',
+        }))
+        .filter(hasTipText)
+    : [];
+  const tips = interleaveTips(curatedTips, feedbackTips);
 
   // Stale-ticket filter: Toast doesn't reliably send completed/voided
   // events for many orders, so without this active orders pile up
@@ -1294,6 +1334,13 @@ export default function LineCoachDisplay({ storeId }) {
     // language silently if the chosen one is empty, so a partially-
     // translated tip still renders something useful.
     const text = pickTipText(tip, language);
+    // Feedback tips come from real Momos customer reviews — label them so
+    // the crew knows this is what guests actually said, not the standard
+    // coaching deck. Terracotta tint separates the two at a glance.
+    const isFeedbackTip = tip.source === 'feedback';
+    const tipLabel = isFeedbackTip
+      ? (language === 'es' ? 'COMENTARIOS DE CLIENTES' : 'CUSTOMER FEEDBACK')
+      : 'QUALITY COACH';
     // Render in the chosen language's native styling — bone Playfair
     // for English, cream italic Playfair for Spanish — so cooks see
     // consistent typography per language across all 4 surfaces.
@@ -1318,11 +1365,22 @@ export default function LineCoachDisplay({ storeId }) {
         <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
         <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} />
         <div style={s.qualityCoach}>
-          <div style={s.qualityLabel}>QUALITY COACH</div>
+          <div style={{ ...s.qualityLabel, ...(isFeedbackTip ? { color: BRAND.terracotta } : {}) }}>{tipLabel}</div>
           <div style={s.qualityTipBlock} key={`${qualityTipIndex}-${language}`}>
             {text && (
               <div style={s.qualityLangSection}>
                 <div style={tipStyle}>{text}</div>
+                {isFeedbackTip && tip.source_quote && (
+                  <div style={{
+                    marginTop: '2.5vh',
+                    color: `${BRAND.cream}A0`,
+                    fontStyle: 'italic',
+                    fontFamily: "'Playfair Display', serif",
+                    fontSize: 'clamp(1rem, 1.6vw, 1.6rem)',
+                  }}>
+                    &ldquo;{tip.source_quote}&rdquo;
+                  </div>
+                )}
               </div>
             )}
           </div>
