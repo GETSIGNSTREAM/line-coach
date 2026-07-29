@@ -800,7 +800,12 @@ export default function LineCoachDisplay({ storeId }) {
   const birdHeaderProps = {
     birdAvailable: birdData != null,
     birdCookingQty: birdCooking.reduce((sum, b) => sum + (b.qty || 0), 0),
-    birdHoldingQty: birdHolding.reduce((sum, b) => sum + (b.qty || 0), 0),
+    // Warmer count = cooked minus what incoming orders already drew
+    // (smart reduction) — the chip shows real availability.
+    birdHoldingQty: Math.round(birdHolding.reduce(
+      (sum, b) => sum + Math.max(0, (b.qty || 0) - (Number(b.consumed_qty) || 0)),
+      0
+    ) * 100) / 100,
     birdAlert: birdAlertCount,
     onBirdOpen: openBirdLog,
   };
@@ -3523,11 +3528,21 @@ function BirdAlertBanner({ pullDue, shredDue, language, onOpen }) {
 // big + row for logging a new batch. 3-min idle timeout like the
 // checklist overlay; ✕ on a row deletes a mis-logged batch.
 const BIRD_IDLE_MS = 180_000;
-const BIRD_QTY_OPTIONS = [1, 2, 4, 6, 8];
+const BIRD_QTY_OPTIONS = [1, 2, 3, 4];
+const BIRD_MAX_QTY = 24;
+
+// Show fractional bird counts cleanly: 2 → "2", 2.5 → "2.5", 2.25 →
+// "2.25" (quarter-bird orders draw 0.25 at a time).
+function fmtBirdQty(n) {
+  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+}
 
 function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, onAction }) {
   const es = language === 'es';
   const [lastTouch, setLastTouch] = useState(() => Date.now());
+  // Custom-qty number pad: null = closed, string = digits typed so far
+  // (kiosks have no OS keyboard, so a free-type field needs a pad).
+  const [customQty, setCustomQty] = useState(null);
 
   useEffect(() => {
     const t = setTimeout(onClose, BIRD_IDLE_MS);
@@ -3543,6 +3558,11 @@ function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, o
   const active = batches.filter((b) => !b.resolved_at);
   const cooking = active.filter((b) => !b.pulled_at);
   const holding = active.filter((b) => b.pulled_at);
+  // Batch numbers: position in today's oven-in order (the fetched set
+  // is active + resolved-today, so numbers stay stable through the
+  // day and match what the admin audit table shows).
+  const numbered = [...batches].sort((a, b) => new Date(a.in_oven_at) - new Date(b.in_oven_at));
+  const batchNoFor = (id) => numbered.findIndex((b) => b.id === id) + 1;
   const secsSince = (iso) => Math.floor((now.getTime() - new Date(iso).getTime()) / 1000);
   const fmtClock = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const fmtMmSs = (totalSecs) => {
@@ -3639,6 +3659,15 @@ function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, o
             const overMin = Math.floor(-remaining / 60);
             return (
               <div key={b.id} style={{ ...rowStyle, border: `1px solid ${remaining <= 0 ? BRAND.red : `${BRAND.cream}25`}` }}>
+                <span style={{
+                  ...label,
+                  flexShrink: 0,
+                  color: `${BRAND.gold}CC`,
+                  border: `1px solid ${BRAND.gold}55`,
+                  borderRadius: '6px',
+                  padding: '2px 8px',
+                  fontSize: 'clamp(0.8rem, 1vw, 1rem)',
+                }}>B{batchNoFor(b.id)}</span>
                 <span style={{ ...label, color: BRAND.bone, fontSize: 'clamp(1rem, 1.4vw, 1.4rem)', flexShrink: 0 }}>
                   {b.qty} 🍗
                 </span>
@@ -3693,6 +3722,9 @@ function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, o
           {holding.map((b) => {
             const heldMin = Math.floor(secsSince(b.pulled_at) / 60);
             const leftMin = windowMin - heldMin;
+            // Remaining = cooked minus what incoming orders have
+            // already drawn (smart reduction, FIFO server-side).
+            const birdRemaining = Math.max(0, (b.qty || 0) - (Number(b.consumed_qty) || 0));
             const state = leftMin <= 0 ? 'shred' : leftMin <= 10 ? 'useFirst' : 'ok';
             const stateColor = state === 'shred' ? BRAND.red : state === 'useFirst' ? BRAND.gold : BRAND.green;
             const stateText = state === 'shred'
@@ -3702,8 +3734,17 @@ function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, o
                 : `${es ? 'VENTANA' : 'CARVE'} ${leftMin} MIN`;
             return (
               <div key={b.id} style={{ ...rowStyle, border: `1px solid ${state === 'shred' ? BRAND.red : `${BRAND.cream}25`}` }}>
+                <span style={{
+                  ...label,
+                  flexShrink: 0,
+                  color: `${BRAND.gold}CC`,
+                  border: `1px solid ${BRAND.gold}55`,
+                  borderRadius: '6px',
+                  padding: '2px 8px',
+                  fontSize: 'clamp(0.8rem, 1vw, 1rem)',
+                }}>B{batchNoFor(b.id)}</span>
                 <span style={{ ...label, color: BRAND.bone, fontSize: 'clamp(1rem, 1.4vw, 1.4rem)', flexShrink: 0 }}>
-                  {b.qty} 🍗
+                  {fmtBirdQty(birdRemaining)} <span style={{ color: `${BRAND.cream}70`, fontSize: '0.75em' }}>/ {b.qty}</span> 🍗
                 </span>
                 <span style={{ color: `${BRAND.cream}90`, fontFamily: "'Oswald', sans-serif", fontSize: 'clamp(0.85rem, 1.1vw, 1.1rem)', flexShrink: 0 }}>
                   {es ? 'SALIÓ' : 'PULLED'} {fmtClock(b.pulled_at)}
@@ -3739,12 +3780,31 @@ function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, o
         </div>
 
         <div style={sectionLabel}>{es ? '+ POLLOS AL HORNO' : '+ BIRDS IN THE OVEN'}</div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-          {BIRD_QTY_OPTIONS.map((n) => (
+        {customQty == null ? (
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            {BIRD_QTY_OPTIONS.map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => onAction({ action: 'in', qty: n })}
+                style={{
+                  ...label,
+                  flex: 1,
+                  minWidth: '90px',
+                  minHeight: '72px',
+                  borderRadius: '12px',
+                  background: BRAND.charcoalLight,
+                  border: `1px solid ${BRAND.gold}40`,
+                  color: BRAND.bone,
+                  fontSize: 'clamp(1.2rem, 1.8vw, 1.8rem)',
+                  cursor: 'pointer',
+                }}
+              >+{n}</button>
+            ))}
             <button
-              key={n}
               type="button"
-              onClick={() => onAction({ action: 'in', qty: n })}
+              onClick={() => setCustomQty('')}
+              title="Enter a custom quantity"
               style={{
                 ...label,
                 flex: 1,
@@ -3752,14 +3812,80 @@ function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, o
                 minHeight: '72px',
                 borderRadius: '12px',
                 background: BRAND.charcoalLight,
-                border: `1px solid ${BRAND.gold}40`,
-                color: BRAND.bone,
+                border: `1px solid ${BRAND.gold}`,
+                color: BRAND.gold,
                 fontSize: 'clamp(1.2rem, 1.8vw, 1.8rem)',
                 cursor: 'pointer',
               }}
-            >+{n}</button>
-          ))}
-        </div>
+            >#</button>
+          </div>
+        ) : (
+          // Number pad for odd batch sizes (a 12-bird catering fire).
+          (() => {
+            const qtyNum = parseInt(customQty, 10) || 0;
+            const valid = qtyNum >= 1 && qtyNum <= BIRD_MAX_QTY;
+            const padBtn = {
+              ...label,
+              minHeight: '64px',
+              borderRadius: '10px',
+              background: BRAND.charcoalLight,
+              border: `1px solid ${BRAND.gold}30`,
+              color: BRAND.bone,
+              fontSize: '1.4rem',
+              cursor: 'pointer',
+            };
+            return (
+              <div style={{ maxWidth: '420px' }}>
+                <div style={{
+                  ...label,
+                  textAlign: 'center',
+                  color: valid || customQty === '' ? BRAND.bone : BRAND.red,
+                  fontSize: '2rem',
+                  padding: '10px',
+                  border: `2px solid ${BRAND.gold}55`,
+                  borderRadius: '10px',
+                  marginBottom: '10px',
+                  minHeight: '58px',
+                  boxSizing: 'border-box',
+                }}>
+                  {customQty || '—'} 🍗
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
+                    <button key={d} type="button" style={padBtn}
+                      onClick={() => setCustomQty((prev) => (prev.length < 2 ? prev + d : prev))}>{d}</button>
+                  ))}
+                  <button type="button" style={{ ...padBtn, color: BRAND.gold }}
+                    onClick={() => setCustomQty((prev) => prev.slice(0, -1))}>⌫</button>
+                  <button type="button" style={padBtn}
+                    onClick={() => setCustomQty((prev) => (prev.length < 2 ? prev + '0' : prev))}>0</button>
+                  <button
+                    type="button"
+                    disabled={!valid}
+                    onClick={() => { onAction({ action: 'in', qty: qtyNum }); setCustomQty(null); }}
+                    style={{
+                      ...padBtn,
+                      background: valid ? BRAND.gold : `${BRAND.gold}30`,
+                      color: valid ? BRAND.charcoal : `${BRAND.charcoal}90`,
+                      border: 'none',
+                      cursor: valid ? 'pointer' : 'default',
+                    }}
+                  >{es ? 'METER' : 'ADD'}</button>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
+                  <button type="button" style={chip} onClick={() => setCustomQty(null)}>
+                    {es ? 'CANCELAR' : 'CANCEL'}
+                  </button>
+                </div>
+                {!valid && customQty !== '' && (
+                  <div style={{ ...label, color: BRAND.red, textAlign: 'center', marginTop: '8px', fontSize: '0.85rem' }}>
+                    1–{BIRD_MAX_QTY}
+                  </div>
+                )}
+              </div>
+            );
+          })()
+        )}
 
         <div style={{
           marginTop: '18px',

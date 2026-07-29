@@ -341,7 +341,7 @@ function validateSides(arr) {
   });
 }
 
-const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category', 'image_url', 'coach_tip_en', 'coach_tip_es', 'accuracy_note_en', 'accuracy_note_es', 'build_steps_en', 'build_steps_es'];
+const MENU_CSV_HEADERS = ['name', 'station', 'cook_time', 'category', 'bird_units', 'image_url', 'coach_tip_en', 'coach_tip_es', 'accuracy_note_en', 'accuracy_note_es', 'build_steps_en', 'build_steps_es'];
 
 // Flatten menu items so coach_tip / accuracy_note {en, es} round-trip
 // cleanly through the CSV (which has no nested-object support).
@@ -891,6 +891,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   // button's disabled state.
   const [shiftSummaryDaysAgo, setShiftSummaryDaysAgo] = useState(1);
   const [shiftSummary, setShiftSummary] = useState(null);
+  const [shiftBirdLog, setShiftBirdLog] = useState(null);
   const [shiftSummaryLoading, setShiftSummaryLoading] = useState(false);
   // Item Performance tab state. days window defaults to 30 for stable
   // percentiles. itemPerfStoreFilter holds the optional store slug;
@@ -1121,6 +1122,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   const loadShiftSummary = useCallback(async () => {
     if (!storeId) {
       setShiftSummary(null);
+      setShiftBirdLog(null);
       return;
     }
     setShiftSummaryLoading(true);
@@ -1132,6 +1134,13 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
       if (res.ok) setShiftSummary(await res.json());
       else setShiftSummary(null);
     } catch { setShiftSummary(null); }
+    // Bird batch audit for the same day — production accountability
+    // (late pulls, over-window holds, shredded waste).
+    try {
+      const res = await fetch(`/api/line-coach/bird-log?store=${storeId}&days_ago=${shiftSummaryDaysAgo}`);
+      if (res.ok) setShiftBirdLog(await res.json());
+      else setShiftBirdLog(null);
+    } catch { setShiftBirdLog(null); }
     setShiftSummaryLoading(false);
   }, [token, storeId, shiftSummaryDaysAgo]);
 
@@ -1408,6 +1417,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Station</th>
               <th style={{ ...styles.th, width: '90px' }}>Cook Time</th>
+              <th style={{ ...styles.th, width: '75px' }} title="Rotisserie birds one unit of this item draws from the warmer (whole=1, half=0.5, quarter=0.25). Drives smart bird reduction.">Birds</th>
               <th style={styles.th}>Coach Tip (EN)</th>
               <th style={styles.th}>Coach Tip (ES)</th>
               <th style={styles.th}>Accuracy Note (EN)</th>
@@ -1469,6 +1479,20 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
                   <td style={styles.td}>
                     <input type="number" style={{ ...styles.input, marginBottom: 0, width: '80px' }} value={item.cook_time}
                       onChange={(e) => { const u = [...items]; u[i] = { ...item, cook_time: parseInt(e.target.value) || 0 }; updateConfig('menu_items', u); }} />
+                  </td>
+                  <td style={styles.td}>
+                    <input type="number" step="0.25" min="0" style={{ ...styles.input, marginBottom: 0, width: '65px' }}
+                      placeholder="0"
+                      value={item.bird_units ?? ''}
+                      onChange={(e) => {
+                        const u = [...items];
+                        const next = { ...item };
+                        const v = e.target.value;
+                        if (v === '' || Number.isNaN(parseFloat(v))) delete next.bird_units;
+                        else next.bird_units = parseFloat(v);
+                        u[i] = next;
+                        updateConfig('menu_items', u);
+                      }} />
                   </td>
                   <td style={styles.td}>
                     <textarea
@@ -2706,6 +2730,75 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
                 </div>
               )}
             </div>
+
+            {/* Bird batch audit — production accountability: late
+                pulls, over-window holds, shredded waste, and how much
+                of each batch orders actually consumed. Device id is
+                the kiosk that logged the action (no per-person auth
+                on displays — initials-level accountability is a
+                possible follow-up). */}
+            {Array.isArray(shiftBirdLog?.batches) && shiftBirdLog.batches.length > 0 && (() => {
+              const cookTarget = shiftBirdLog.cook_minutes ?? 32;
+              const windowMin = shiftBirdLog.carve_window_minutes ?? 40;
+              const mins = (a, b) => (a && b) ? Math.round((new Date(b) - new Date(a)) / 60_000) : null;
+              const rows = shiftBirdLog.batches.map((b, i) => {
+                const cookMins = mins(b.in_oven_at, b.pulled_at);
+                const holdMins = mins(b.pulled_at, b.resolved_at);
+                return {
+                  ...b,
+                  no: i + 1,
+                  cookMins,
+                  holdMins,
+                  latePull: cookMins != null && cookMins > cookTarget + 3,
+                  overWindow: holdMins != null && holdMins > windowMin,
+                };
+              });
+              const totalIn = rows.reduce((sum, b) => sum + (b.qty || 0), 0);
+              const shredded = rows.filter((b) => b.resolution === 'shredded').reduce((sum, b) => sum + (b.qty || 0), 0);
+              const latePulls = rows.filter((b) => b.latePull).length;
+              const fmtT = (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+              return (
+                <div style={{ marginBottom: '24px' }}>
+                  <div style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", letterSpacing: '1.5px', textTransform: 'uppercase', fontSize: '0.85rem', marginBottom: '8px' }}>
+                    🍗 Bird batches — {totalIn} in · {shredded} shredded{latePulls > 0 && <span style={{ color: BRAND.red }}> · {latePulls} late pull{latePulls === 1 ? '' : 's'}</span>}
+                  </div>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>#</th>
+                        <th style={styles.th}>Qty</th>
+                        <th style={styles.th}>In oven</th>
+                        <th style={styles.th}>Pulled (cook)</th>
+                        <th style={styles.th}>Resolved (hold)</th>
+                        <th style={styles.th}>Outcome</th>
+                        <th style={styles.th}>Consumed by orders</th>
+                        <th style={styles.th}>Device</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((b) => (
+                        <tr key={b.id}>
+                          <td style={{ ...styles.td, color: BRAND.gold, fontWeight: 700 }}>B{b.no}</td>
+                          <td style={styles.td}>{b.qty}</td>
+                          <td style={styles.td}>{fmtT(b.in_oven_at)}</td>
+                          <td style={{ ...styles.td, color: b.latePull ? BRAND.red : BRAND.cream }}>
+                            {fmtT(b.pulled_at)}{b.cookMins != null && ` (${b.cookMins}m${b.latePull ? ' LATE' : ''})`}
+                          </td>
+                          <td style={{ ...styles.td, color: b.overWindow ? BRAND.red : BRAND.cream }}>
+                            {fmtT(b.resolved_at)}{b.holdMins != null && ` (${b.holdMins}m${b.overWindow ? ' OVER' : ''})`}
+                          </td>
+                          <td style={{ ...styles.td, color: b.resolution === 'shredded' ? BRAND.yellow : BRAND.cream }}>
+                            {b.resolution || (b.pulled_at ? 'in warmer' : 'cooking')}
+                          </td>
+                          <td style={styles.td}>{Number(b.consumed_qty) || 0} / {b.qty}</td>
+                          <td style={{ ...styles.td, color: `${BRAND.cream}70`, fontSize: '0.75rem' }}>{b.device_id || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
 
             {/* Webhook log section */}
             <div>

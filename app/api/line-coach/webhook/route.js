@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createHmac } from 'crypto';
-import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId, logWebhook, getConfig, isWithinServiceWindow } from '@/lib/line-coach';
+import { upsertOrderByToastId, bumpOrderByToastId, resolveStoreId, logWebhook, getConfig, isWithinServiceWindow, orderBirdUnits, consumeBirds } from '@/lib/line-coach';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 import { canonicalSideName, parseSideSize, sizeFromModifiers } from '@/lib/side-canonical';
@@ -534,11 +534,23 @@ export async function POST(request) {
       order_channel: orderChannel,
     };
 
-    const { data, error } = await upsertOrderByToastId(toastOrderGuid, order);
+    const { data, error, created } = await upsertOrderByToastId(toastOrderGuid, order);
     if (error) {
       console.error('Order save failed:', error.message);
       logWebhook({ store_id: storeId, status: 'insert_error', http_status: 500, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start, error_message: error.message });
       return NextResponse.json({ error: 'Failed to process order' }, { status: 500 });
+    }
+
+    // Smart bird reduction: draw this order's carve-chicken demand
+    // down from the warmer (FIFO) so displays show real availability.
+    // Only on first insert — Toast re-delivers webhooks on order
+    // updates and consuming twice would phantom-empty the warmer.
+    // Fire-and-forget: consumption failing must never fail ingest.
+    if (created) {
+      const units = orderBirdUnits(mergedMains, storeCfg?.menu_items);
+      if (units > 0) {
+        consumeBirds({ storeId, units }).catch(() => { /* next batch read reconciles */ });
+      }
     }
 
     logWebhook({ store_id: storeId, status: 'ok', http_status: 200, toast_order_id: toastOrderGuid, order_id: data.id, ip, payload: body, duration_ms: Date.now() - start });
