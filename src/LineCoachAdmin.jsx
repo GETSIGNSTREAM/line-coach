@@ -163,7 +163,7 @@ const styles = {
   deviceOffline: { color: `${BRAND.cream}60`, fontSize: '0.8rem' },
 };
 
-const TABS = ['Menu', 'Sides', 'Tips', 'Feedback Tips', 'Hold Times', 'Service Hours', 'Dining Options', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Shift Summary', 'Item Performance', 'Maintenance'];
+const TABS = ['Menu', 'Sides', 'Tips', 'Feedback Tips', 'Checklists', 'Hold Times', 'Service Hours', 'Dining Options', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Shift Summary', 'Item Performance', 'Maintenance'];
 
 const ALLOWED_STATIONS = ['oven', 'grill', 'fryer', 'line', 'cold', 'hot_hold', 'grab'];
 
@@ -741,6 +741,103 @@ function StepsEditorModal({ item, onClose, onSave }) {
   );
 }
 
+// Stable short id for checklists and their items. Generated once on
+// add and NEVER regenerated on edit — lc_checklist_runs rows reference
+// these ids, so regenerating one would orphan every past run.
+function genChecklistId() {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+// Checklist items editor. Same modal shape as StepsEditorModal, but
+// each row carries a stable `id` alongside its {en, es} text so runs
+// keep matching after reorders and text edits.
+function ChecklistItemsModal({ checklist, onClose, onSave }) {
+  const initial = Array.isArray(checklist.items)
+    ? checklist.items.map((it) => ({ id: it?.id || genChecklistId(), en: it?.en || '', es: it?.es || '' }))
+    : [];
+  const [items, setItems] = useState(initial.length ? initial : [{ id: genChecklistId(), en: '', es: '' }]);
+
+  const setItem = (i, field, value) => {
+    setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, [field]: value } : it)));
+  };
+  const move = (i, dir) => {
+    setItems((prev) => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+  const remove = (i) => setItems((prev) => prev.filter((_, idx) => idx !== i));
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onClose}
+    >
+      <div
+        style={{ ...styles.panel, width: 'min(860px, 92vw)', maxHeight: '85vh', overflowY: 'auto', margin: 0 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: '1.1rem', letterSpacing: '2px', color: BRAND.gold, textTransform: 'uppercase', marginBottom: '6px' }}>
+          Checklist Items — {checklist.name?.en || checklist.name?.es || '(unnamed checklist)'}
+        </div>
+        <div style={{ color: `${BRAND.cream}90`, fontSize: '0.8rem', marginBottom: '14px' }}>
+          Shown on the kitchen display in order. Crews tap items off; the
+          list is signed with initials when everything is checked.
+        </div>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={{ ...styles.th, width: '36px' }}>#</th>
+              <th style={styles.th}>English</th>
+              <th style={styles.th}>Español</th>
+              <th style={{ ...styles.th, width: '150px' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it, i) => (
+              <tr key={it.id}>
+                <td style={{ ...styles.td, color: BRAND.gold, fontWeight: 700, textAlign: 'center' }}>{i + 1}</td>
+                <td style={styles.td}>
+                  <textarea style={{ ...styles.textarea, marginBottom: 0, minHeight: '48px' }} rows={2}
+                    placeholder="e.g. Turn on ovens and check pilot lights"
+                    value={it.en} onChange={(e) => setItem(i, 'en', e.target.value)} />
+                </td>
+                <td style={styles.td}>
+                  <textarea style={{ ...styles.textarea, marginBottom: 0, minHeight: '48px' }} rows={2}
+                    placeholder="Optional — leave blank for English only"
+                    value={it.es} onChange={(e) => setItem(i, 'es', e.target.value)} />
+                </td>
+                <td style={styles.td}>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button style={styles.btnSecondary} disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+                    <button style={styles.btnSecondary} disabled={i === items.length - 1} onClick={() => move(i, 1)}>↓</button>
+                    <button style={styles.btnSecondary} onClick={() => remove(i)}>✕</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button style={{ ...styles.btnSecondary, marginTop: '10px' }} onClick={() => setItems((prev) => [...prev, { id: genChecklistId(), en: '', es: '' }])}>
+          + Add Item
+        </button>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+          <button style={styles.btnSecondary} onClick={onClose}>Cancel</button>
+          <button style={styles.btn} onClick={() => {
+            const cleaned = items
+              .map((it) => ({ id: it.id, en: it.en.trim(), es: it.es.trim() }))
+              .filter((it) => it.en || it.es);
+            onSave(cleaned);
+          }}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // All WILDBIRD store slugs in the order the hub presents them.
 // Used by the admin store-picker dropdown.
 const STORE_OPTIONS = [
@@ -818,6 +915,8 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   // Learn mode — build-steps editor modal (index into menu_items, null =
   // closed) and the Notion Recipe OS sync button state.
   const [stepsEditorIndex, setStepsEditorIndex] = useState(null);
+  // Checklists — items editor modal (index into checklists, null = closed).
+  const [checklistEditorIndex, setChecklistEditorIndex] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
   const [maintStats, setMaintStats] = useState(null);
@@ -1591,6 +1690,136 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
         <div style={{ color: BRAND.cream, fontSize: '0.85rem', marginTop: '8px' }}>
           {tips.length} tips configured · {translatedCount} translated to Spanish
         </div>
+      </div>
+    );
+  }
+
+  function renderChecklistsTab() {
+    // Brand-wide checklist templates (opening / closing / prep).
+    // Completion is per store per business day (lc_checklist_runs) and
+    // never edited here — this tab only owns the templates. Ids are
+    // stable: generated on add, kept through every edit, because runs
+    // reference them.
+    const checklists = (config.checklists || []).map((cl) => ({
+      id: cl?.id || genChecklistId(),
+      name: { en: cl?.name?.en || '', es: cl?.name?.es || '' },
+      window: (cl?.window && cl.window.start && cl.window.end)
+        ? { start: cl.window.start, end: cl.window.end }
+        : null,
+      items: Array.isArray(cl?.items) ? cl.items : [],
+    }));
+    const setChecklist = (i, next) => {
+      updateConfig('checklists', checklists.map((cl, idx) => (idx === i ? next : cl)));
+    };
+    const move = (i, dir) => {
+      const j = i + dir;
+      if (j < 0 || j >= checklists.length) return;
+      const next = [...checklists];
+      [next[i], next[j]] = [next[j], next[i]];
+      updateConfig('checklists', next);
+    };
+    const removeChecklist = (i) => {
+      updateConfig('checklists', checklists.filter((_, idx) => idx !== i));
+    };
+    const addChecklist = () => {
+      updateConfig('checklists', [...checklists, {
+        id: genChecklistId(),
+        name: { en: '', es: '' },
+        window: { start: '05:00', end: '11:00' },
+        items: [],
+      }]);
+    };
+    return (
+      <div style={styles.panel}>
+        <BrandWideBanner />
+        <p style={{ color: BRAND.cream, marginTop: 0 }}>
+          Opening, closing, and prep checklists shown on the kitchen displays.
+          A time window makes a checklist &ldquo;due&rdquo; during those hours (an
+          overnight window like 20:00–02:00 counts the early morning toward the
+          previous day&apos;s close); leave &ldquo;Anytime&rdquo; checked for lists with no
+          schedule. Crews tap items off on the display and sign with initials —
+          completion is per store, per day.
+        </p>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={{ ...styles.th, width: '40px' }}>#</th>
+              <th style={styles.th}>Name (EN)</th>
+              <th style={styles.th}>Nombre (ES)</th>
+              <th style={{ ...styles.th, width: '230px' }}>Window</th>
+              <th style={{ ...styles.th, width: '110px' }}>Items</th>
+              <th style={{ ...styles.th, width: '190px' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {checklists.map((cl, i) => (
+              <tr key={cl.id}>
+                <td style={{ ...styles.td, color: BRAND.gold, fontWeight: 700, textAlign: 'center' }}>{i + 1}</td>
+                <td style={styles.td}>
+                  <input style={{ ...styles.input, marginBottom: 0 }} placeholder="e.g. Opening"
+                    value={cl.name.en}
+                    onChange={(e) => setChecklist(i, { ...cl, name: { ...cl.name, en: e.target.value } })} />
+                </td>
+                <td style={styles.td}>
+                  <input style={{ ...styles.input, marginBottom: 0 }} placeholder="e.g. Apertura"
+                    value={cl.name.es}
+                    onChange={(e) => setChecklist(i, { ...cl, name: { ...cl.name, es: e.target.value } })} />
+                </td>
+                <td style={styles.td}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', color: BRAND.cream, fontSize: '0.8rem', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={cl.window == null}
+                        onChange={(e) => setChecklist(i, { ...cl, window: e.target.checked ? null : { start: '05:00', end: '11:00' } })}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      Anytime
+                    </label>
+                    {cl.window && (
+                      <>
+                        <input type="time" style={{ ...styles.input, marginBottom: 0, width: '92px' }}
+                          value={cl.window.start}
+                          onChange={(e) => setChecklist(i, { ...cl, window: { ...cl.window, start: e.target.value } })} />
+                        <span style={{ color: `${BRAND.cream}80` }}>–</span>
+                        <input type="time" style={{ ...styles.input, marginBottom: 0, width: '92px' }}
+                          value={cl.window.end}
+                          onChange={(e) => setChecklist(i, { ...cl, window: { ...cl.window, end: e.target.value } })} />
+                      </>
+                    )}
+                  </div>
+                </td>
+                <td style={{ ...styles.td, textAlign: 'center', color: cl.items.length ? BRAND.cream : BRAND.red }}>
+                  {cl.items.length}
+                </td>
+                <td style={styles.td}>
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                    <button style={styles.btnSecondary} onClick={() => setChecklistEditorIndex(i)}>Edit items</button>
+                    <button style={styles.btnSecondary} disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+                    <button style={styles.btnSecondary} disabled={i === checklists.length - 1} onClick={() => move(i, 1)}>↓</button>
+                    <button style={styles.btnSecondary} onClick={() => removeChecklist(i)}>✕</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button style={{ ...styles.btnSecondary, marginTop: '12px' }} onClick={addChecklist}>
+          + Add Checklist
+        </button>
+        <div style={{ color: BRAND.cream, fontSize: '0.85rem', marginTop: '8px' }}>
+          {checklists.length} checklists configured · a checklist with 0 items never shows on displays
+        </div>
+        {checklistEditorIndex != null && checklists[checklistEditorIndex] && (
+          <ChecklistItemsModal
+            checklist={checklists[checklistEditorIndex]}
+            onClose={() => setChecklistEditorIndex(null)}
+            onSave={(items) => {
+              setChecklist(checklistEditorIndex, { ...checklists[checklistEditorIndex], items });
+              setChecklistEditorIndex(null);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -2745,7 +2974,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     );
   }
 
-  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Feedback Tips': renderFeedbackTipsTab, 'Hold Times': renderHoldTimesTab, 'Service Hours': renderServiceHoursTab, 'Dining Options': renderDiningOptionsTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, 'Shift Summary': renderShiftSummaryTab, 'Item Performance': renderItemPerfTab, Maintenance: renderMaintenanceTab };
+  const tabRenderers = { Menu: renderMenuTab, Sides: renderSidesTab, Tips: renderTipsTab, 'Feedback Tips': renderFeedbackTipsTab, Checklists: renderChecklistsTab, 'Hold Times': renderHoldTimesTab, 'Service Hours': renderServiceHoursTab, 'Dining Options': renderDiningOptionsTab, Settings: renderSettingsTab, Devices: renderDevicesTab, Webhooks: renderWebhooksTab, Analytics: renderAnalyticsTab, 'Shift Summary': renderShiftSummaryTab, 'Item Performance': renderItemPerfTab, Maintenance: renderMaintenanceTab };
 
   return (
     <div style={styles.container}>
