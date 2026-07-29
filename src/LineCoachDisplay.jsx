@@ -175,9 +175,10 @@ function isPackagingItem(name) {
   return PACKAGING_ITEM_RE.test(name || '');
 }
 
-// One "w/ ..." fragment from a side list — qty prefix and LG/SM size
-// tag. Shared by the per-item pairing line, the order-level à-la-carte
-// line, and focus mode so every surface formats sides identically.
+// One "w/ ..." text fragment from a side list — qty prefix and LG/SM
+// size tag. Card + focus surfaces now lead with SideThumbRow visuals;
+// this stays for the loose-sides presence check and any text-only
+// surface that needs the compact form.
 function formatSideList(sides) {
   return (sides || []).map((side) => {
     const sn = typeof side === 'string' ? side : side.name;
@@ -395,6 +396,107 @@ function FoodPhoto({ src, alt, style = {} }) {
           <circle cx="12" cy="12" r="5" />
         </svg>
       )}
+    </div>
+  );
+}
+
+// Visual side row — replaces the "w/ Broccoli, Brussel Sprouts" text
+// line on order cards and focus mode. Each side renders as a photo
+// thumb (FoodPhoto, so missing photos fall back to the plate glyph)
+// with the name as a small caption beneath — visuals lead, copy stays.
+// Qty and portion size overlay the photo as pills so the thumb alone
+// carries the full instruction. The 'w/' / '+' prefix survives as a
+// small gold glyph so the attached-vs-à-la-carte grammar cooks already
+// learned is preserved. Distinct from the TOTAL SIDES batching panel,
+// which stays aggregate — this row is per-plate, that panel is what to
+// drop in batches.
+function SideThumbRow({ sides, thumbPx, menuItems, configSides, prefix, style = {} }) {
+  const list = (sides || []).filter((sd) => sd && (typeof sd === 'string' ? sd : sd.name));
+  if (list.length === 0) return null;
+  const captionPx = Math.max(11, Math.min(18, Math.round(thumbPx / 5.5)));
+  const pillPx = Math.max(10, Math.round(thumbPx / 6));
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '10px', ...style }}>
+      {prefix && (
+        <div style={{
+          alignSelf: 'center',
+          color: BRAND.gold,
+          fontFamily: "'Oswald', sans-serif",
+          fontWeight: 700,
+          fontSize: `${Math.round(thumbPx / 3)}px`,
+          lineHeight: 1,
+          flexShrink: 0,
+        }}>{prefix}</div>
+      )}
+      {list.map((side, i) => {
+        const name = typeof side === 'string' ? side : side.name;
+        const qty = (typeof side === 'object' && side.quantity) || 1;
+        const sizeTag = (typeof side === 'object' && side.size && side.size !== 'regular')
+          ? (side.size === 'large' ? 'LG' : 'SM')
+          : null;
+        return (
+          // Fixed cell wider than the thumb so long names ("UPTOWN MAC
+          // & CHEESE") wrap to ≤2 lines and wrapped rows stay aligned.
+          <div key={`${name}-${i}`} style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '4px',
+            width: `${Math.round(thumbPx * 1.5)}px`,
+          }}>
+            {/* Badges live on this wrapper, not FoodPhoto — its
+                overflow:hidden would clip the overhanging qty pill. */}
+            <div style={{ position: 'relative', width: `${thumbPx}px`, height: `${thumbPx}px` }}>
+              <FoodPhoto
+                src={getSideImageUrl(name, menuItems, configSides)}
+                alt={name}
+                style={{ width: '100%', height: '100%', borderRadius: '8px' }}
+              />
+              {qty > 1 && (
+                <div style={{
+                  position: 'absolute',
+                  top: '-5px',
+                  right: '-5px',
+                  background: BRAND.gold,
+                  color: BRAND.charcoalDark,
+                  fontFamily: "'Oswald', sans-serif",
+                  fontWeight: 700,
+                  fontSize: `${pillPx}px`,
+                  lineHeight: 1.3,
+                  padding: '1px 6px',
+                  borderRadius: '10px',
+                }}>{qty}x</div>
+              )}
+              {sizeTag && (
+                <div style={{
+                  position: 'absolute',
+                  bottom: '3px',
+                  right: '3px',
+                  background: BRAND.gold,
+                  color: BRAND.charcoalDark,
+                  fontFamily: "'Oswald', sans-serif",
+                  fontWeight: 700,
+                  fontSize: `${pillPx}px`,
+                  lineHeight: 1.3,
+                  padding: '1px 5px',
+                  borderRadius: '4px',
+                  letterSpacing: '0.5px',
+                }}>{sizeTag}</div>
+              )}
+            </div>
+            <div style={{
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              color: BRAND.cream,
+              fontSize: `${captionPx}px`,
+              lineHeight: 1.1,
+              textAlign: 'center',
+              letterSpacing: '0.5px',
+            }}>{name}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1793,7 +1895,6 @@ export default function LineCoachDisplay({ storeId }) {
     };
     const diningLabel = order.diningOption || '';
     const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
-    const sidesText = formatSideList(order.sides);
     const allergyNote = isAllergyNote(order.notes) ? order.notes : null;
     const inlineNote = allergyNote ? null : order.notes;
     const sourceLabel = order.priority === 'rush' ? 'ASAP' : (diningLabel ? diningLabel.toUpperCase() : null);
@@ -2011,13 +2112,14 @@ export default function LineCoachDisplay({ storeId }) {
               gap="4px"
             />
             <AccuracyNote note={primaryMenu?.accuracy_note} language={language} size="clamp(1.1rem, 1.7vw, 1.7rem)" style={{ marginTop: '6px' }} />
-            {sidesText && (
-              <div style={{
-                fontSize: 'clamp(1.2rem, 1.9vw, 1.9rem)',
-                color: BRAND.white,
-                fontWeight: 700,
-                fontFamily: "'Open Sans', sans-serif",
-              }}>w/ {sidesText}</div>
+            {(order.sides || []).length > 0 && (
+              <SideThumbRow
+                sides={order.sides}
+                thumbPx={110}
+                menuItems={menuItems}
+                configSides={configSides}
+                prefix="w/"
+              />
             )}
             {inlineNote && (
               <div style={{
@@ -2688,14 +2790,16 @@ export default function LineCoachDisplay({ storeId }) {
                             {Array.isArray(item.sides) && item.sides.length > 0 && (
                               // This entree's own sides, paired directly
                               // beneath it — never separated from it by
-                              // cookies or other order lines.
-                              <div style={{
-                                fontSize: sidesLineSize,
-                                lineHeight: 1.3,
-                                paddingLeft: sidesIndent,
-                                color: BRAND.white,
-                                fontWeight: 700,
-                              }}>w/ {formatSideList(item.sides)}</div>
+                              // cookies or other order lines. Visual-led:
+                              // photo thumbs with caption names.
+                              <SideThumbRow
+                                sides={item.sides}
+                                thumbPx={isComfortable ? 96 : 72}
+                                menuItems={menuItems}
+                                configSides={configSides}
+                                prefix="w/"
+                                style={{ paddingLeft: sidesIndent, marginTop: '4px' }}
+                              />
                             )}
                             <AccuracyNote note={menuMatch?.accuracy_note} language={language} size={modifierSize} style={{ paddingLeft: sidesIndent }} />
                             {isComfortable && (
@@ -2704,26 +2808,24 @@ export default function LineCoachDisplay({ storeId }) {
                             </div>
                             );
                           })}
-                          {(sidesText || inlineNote) && (
+                          {sidesText && (
+                            <SideThumbRow
+                              sides={looseSides}
+                              thumbPx={isComfortable ? 96 : 72}
+                              menuItems={menuItems}
+                              configSides={configSides}
+                              prefix={sidesPrefix}
+                              style={{ paddingLeft: sidesIndent, marginTop: '4px' }}
+                            />
+                          )}
+                          {inlineNote && (
                             <div style={{
                               fontSize: sidesLineSize,
                               lineHeight: 1.3,
                               paddingLeft: sidesIndent,
-                              display: 'flex',
-                              gap: '12px',
-                              flexWrap: 'wrap',
-                            }}>
-                              {sidesText && (
-                                <span style={{ color: BRAND.white, fontWeight: 700 }}>{sidesPrefix} {sidesText}</span>
-                              )}
-                              {inlineNote && (
-                                <span style={{
-                                  color: BRAND.gold,
-                                  fontWeight: 700,
-                                  marginLeft: sidesText ? '10px' : 0,
-                                }}>⚠ {inlineNote}</span>
-                              )}
-                            </div>
+                              color: BRAND.gold,
+                              fontWeight: 700,
+                            }}>⚠ {inlineNote}</div>
                           )}
                         </div>
                       </div>
@@ -2751,7 +2853,11 @@ export default function LineCoachDisplay({ storeId }) {
 
         {/* Right Column: Side Batching */}
         <div style={s.rightCol}>
-          <div style={s.sidesPanelHeader}>SIDES</div>
+          {/* Aggregate batch-cook counts — deliberately distinct from
+              the per-order side thumbnails on the cards. This panel is
+              "what to drop in batches"; the thumbs are "what goes on
+              each plate." */}
+          <div style={s.sidesPanelHeader}>TOTAL SIDES</div>
           <div style={s.sidesContainer}>
             {batchedSides.length === 0 && (
               <div style={s.emptyState}>—</div>
@@ -3275,8 +3381,17 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
                 const size = (isObj && side.size && side.size !== 'regular') ? side.size : null;
                 const alaCarte = isObj && !!side.alaCarte;
                 return (
-                  <div key={si} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', fontSize: '1.1rem', color: BRAND.cream, padding: '6px 0', borderBottom: `1px solid ${BRAND.charcoalLight}` }}>
-                    <span>
+                  // Thumb + text row (not SideThumbRow): the sheet's
+                  // list layout carries à-la-carte / ×qty detail the
+                  // thumb-column format doesn't, and the sheet is a
+                  // slow-read surface.
+                  <div key={si} style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '1.1rem', color: BRAND.cream, padding: '6px 0', borderBottom: `1px solid ${BRAND.charcoalLight}` }}>
+                    <FoodPhoto
+                      src={getSideImageUrl(sn, menuItems, configSides)}
+                      alt={sn}
+                      style={{ width: '56px', height: '56px', borderRadius: '8px' }}
+                    />
+                    <span style={{ flex: 1 }}>
                       {sn}
                       {size && <span style={{ color: BRAND.gold, fontWeight: 700, marginLeft: '6px' }}>{size === 'large' ? 'LG' : 'SM'}</span>}
                       {alaCarte && <span style={{ color: BRAND.cream, opacity: 0.7, fontSize: '0.85rem', letterSpacing: '0.5px', marginLeft: '8px' }}>À LA CARTE</span>}
