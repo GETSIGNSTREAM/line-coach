@@ -452,7 +452,7 @@ export async function POST(request) {
 
       mains.push({
         name: titleCase(cleanName),
-        quantity: item.quantity || 1,
+        quantity: itemQty,
         modifiers: extracted.modifiers,
         // This entree's own sides, kept on the item so the display can
         // pair "w/ ..." directly beneath its parent entree. order.sides
@@ -460,6 +460,29 @@ export async function POST(request) {
         // display convenience, not a second source of truth.
         sides: extracted.sides.map(({ name, quantity, size }) => ({ name, quantity, size })),
       });
+    }
+
+    // Collapse duplicate mains the same way — Toast sends "5 × $2
+    // Taco" rung in as separate lines as five qty-1 selections. Same
+    // name + same modifier set merge into one entry with summed
+    // quantity (and summed per-item side counts). Differing modifiers
+    // stay separate so "no onions" never hides inside a merged row.
+    const mainMap = {};
+    const mergedMains = [];
+    for (const m of mains) {
+      const key = `${m.name}|${(m.modifiers || []).join('¦')}`;
+      const prev = mainMap[key];
+      if (!prev) {
+        mainMap[key] = m;
+        mergedMains.push(m);
+        continue;
+      }
+      prev.quantity = (Number(prev.quantity) || 1) + (Number(m.quantity) || 1);
+      for (const s of m.sides || []) {
+        const match = (prev.sides || []).find((p) => p.name === s.name && (p.size || 'regular') === (s.size || 'regular'));
+        if (match) match.quantity += s.quantity;
+        else (prev.sides = prev.sides || []).push(s);
+      }
     }
 
     // Deduplicate sides. Key on name + size + à-la-carte so Large stays
@@ -522,7 +545,7 @@ export async function POST(request) {
       store_id: storeId,
       order_number: checkNumber,
       customer_name: customerName,
-      items: mains,
+      items: mergedMains,
       sides: deduplicatedSides,
       priority: isRush ? 'rush' : 'normal',
       priority_rank: priorityRank,

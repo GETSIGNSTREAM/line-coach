@@ -1752,7 +1752,37 @@ export default function LineCoachDisplay({ storeId }) {
         // sees clean food items plus a `packaging` callout list.
         const rawItems = order.items || [];
         const packaging = rawItems.filter((it) => isPackagingItem(it?.name)).map((it) => it.name);
-        const items = rawItems.filter((it) => !isPackagingItem(it?.name)).map((item) => {
+        // Collapse duplicate line items: Toast sends "5 × $2 Taco"
+        // rung in as separate lines as five qty-1 selections. Same
+        // name + same modifier set → one row with a summed "5x"
+        // (per-item side counts summed too). Items with differing
+        // modifiers stay separate on purpose — merging would hide
+        // which taco has no onions.
+        const collapsed = [];
+        const collapseKeys = new Map();
+        for (const it of rawItems.filter((x) => !isPackagingItem(x?.name))) {
+          const key = `${it.name}|${(it.modifiers || []).join('¦')}`;
+          const prev = collapseKeys.get(key);
+          if (!prev) {
+            const copy = {
+              ...it,
+              quantity: Number(it.quantity) || 1,
+              sides: Array.isArray(it.sides) ? it.sides.map((sd) => ({ ...sd })) : it.sides,
+            };
+            collapseKeys.set(key, copy);
+            collapsed.push(copy);
+            continue;
+          }
+          prev.quantity += Number(it.quantity) || 1;
+          if (Array.isArray(prev.sides) && Array.isArray(it.sides)) {
+            for (const sd of it.sides) {
+              const match = prev.sides.find((p) => p.name === sd.name && (p.size || 'regular') === (sd.size || 'regular'));
+              if (match) match.quantity = (Number(match.quantity) || 1) + (Number(sd.quantity) || 1);
+              else prev.sides.push({ ...sd });
+            }
+          }
+        }
+        const items = collapsed.map((item) => {
           const menuMatch = menuItems.find((m) => m.name === item.name);
           const cookTime = menuMatch?.cook_time || 0;
           if (cookTime > maxCookTime) maxCookTime = cookTime;
