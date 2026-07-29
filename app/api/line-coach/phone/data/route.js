@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { buildDailyRecap, getTicketTimePercentiles, getActiveOrders, getConfig, resolveStoreId } from '@/lib/line-coach';
+import { buildDailyRecap, getTicketTimePercentiles, getActiveOrders, getConfig, resolveStoreId, getChecklistRuns } from '@/lib/line-coach';
 import { requirePhone } from '@/lib/auth';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
@@ -46,6 +46,38 @@ function severityFor(p90Sec, slaTargetSec, slaBreachSec) {
   return 0;
 }
 
+// Checklist status for one store, phone-shaped. Store mode gets the
+// per-checklist rows; brand mode collapses to a summary for the pill.
+// Errors degrade to null so a checklist hiccup never breaks the SLA
+// dashboard (its primary job).
+async function checklistsForStore(storeId) {
+  try {
+    const { data, error } = await getChecklistRuns(storeId);
+    if (error || !data) return null;
+    return data.checklists.map((cl) => ({
+      id: cl.id,
+      name: cl.name,
+      window: cl.window,
+      due_now: cl.due_now,
+      items_total: cl.items.length,
+      items_checked: Object.keys(cl.run?.checked_items || {}).length,
+      completed_at: cl.run?.completed_at || null,
+      completed_by: cl.run?.completed_by || null,
+    }));
+  } catch {
+    return null;
+  }
+}
+
+function checklistSummary(rows) {
+  if (!rows || rows.length === 0) return null;
+  return {
+    total: rows.length,
+    completed: rows.filter((r) => r.completed_at).length,
+    due_unsigned: rows.filter((r) => r.due_now && !r.completed_at).length,
+  };
+}
+
 export async function GET(request) {
   const rlKey = getRateLimitKey(request, 'admin');
   const rl = checkRateLimit(rlKey, RATE_LIMITS.admin.limit, RATE_LIMITS.admin.windowMs);
@@ -78,10 +110,11 @@ export async function GET(request) {
     if (!STORES.includes(storeParam)) {
       return NextResponse.json({ error: 'unknown store' }, { status: 400 });
     }
-    const [todayRes, trail, activeRes] = await Promise.all([
+    const [todayRes, trail, activeRes, checklistRows] = await Promise.all([
       buildDailyRecap({ storeId: storeParam, slaBreachMin, cleanupCutoffMinutes, daysAgo: 0 }),
       getTicketTimePercentiles({ storeId: storeParam, days: 7, cleanupCutoffMinutes }),
       getActiveOrders(storeParam),
+      checklistsForStore(storeParam),
     ]);
 
     const today = todayRes.data || null;
@@ -108,6 +141,7 @@ export async function GET(request) {
       today,
       trailing_7d: trail.data || [],
       active_now: activeFresh.length,
+      checklists: checklistRows || [],
       // Severity for the badge / glow on the drill-in header.
       breach_severity: severityFor(today?.p90_seconds, slaTargetSec, slaBreachSec),
       ran_at: new Date().toISOString(),
@@ -117,10 +151,11 @@ export async function GET(request) {
   // ── Brand overview mode ──────────────────────────────────
   const stores = await Promise.all(STORES.map(async (storeId) => {
     try {
-      const [todayRes, trail, activeRes] = await Promise.all([
+      const [todayRes, trail, activeRes, checklistRows] = await Promise.all([
         buildDailyRecap({ storeId, slaBreachMin, cleanupCutoffMinutes, daysAgo: 0 }),
         getTicketTimePercentiles({ storeId, days: 7, cleanupCutoffMinutes }),
         getActiveOrders(storeId),
+        checklistsForStore(storeId),
       ]);
       const today = todayRes.data;
       const trailing_7d_p90 = avgPoints(trail.data, 'p90');
@@ -142,6 +177,7 @@ export async function GET(request) {
         active_now: activeFresh.length,
         anomaly_count: (today?.anomalies?.length) ?? 0,
         breach_severity: severityFor(today?.p90_seconds, slaTargetSec, slaBreachSec),
+        checklist_summary: checklistSummary(checklistRows),
       };
     } catch (err) {
       return { store_id: storeId, store_name: STORE_DISPLAY[storeId] || storeId, error: err.message };
