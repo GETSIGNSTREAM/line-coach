@@ -87,7 +87,12 @@ async function birdSummaryForStore(storeId, cookMin, windowMin) {
         ? Math.max(0, Math.ceil(Math.min(...cooking.map((b) => cookMin - mins(b.in_oven_at)))))
         : null,
       pull_due_qty: qtySum(cooking.filter((b) => mins(b.in_oven_at) >= cookMin)),
-      holding_qty: qtySum(holding),
+      // Remaining after smart reduction — real availability, not
+      // birds-as-cooked.
+      holding_qty: Math.round(holding.reduce(
+        (s, b) => s + Math.max(0, (b.qty || 0) - (Number(b.consumed_qty) || 0)),
+        0
+      ) * 100) / 100,
       oldest_hold_minutes: holding.length
         ? Math.floor(Math.max(...holding.map((b) => mins(b.pulled_at))))
         : null,

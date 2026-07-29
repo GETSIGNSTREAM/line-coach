@@ -27,9 +27,13 @@ export async function GET(request) {
 
   const { searchParams } = new URL(request.url);
   const storeId = searchParams.get('store') || 'hollywood';
+  // ?days_ago=N → audit view: every batch put in the oven that LA day
+  // (admin Shift Summary). Without it: active + resolved-today.
+  const daysAgoRaw = searchParams.get('days_ago');
+  const daysAgo = daysAgoRaw != null && /^\d+$/.test(daysAgoRaw) ? parseInt(daysAgoRaw, 10) : null;
 
   const [{ data: batches, error }, cfgRes] = await Promise.all([
-    getBirdBatches(storeId),
+    getBirdBatches(storeId, { daysAgo }),
     getConfig(storeId),
   ]);
   if (error) {
