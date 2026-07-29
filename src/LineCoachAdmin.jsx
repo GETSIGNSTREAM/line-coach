@@ -103,24 +103,46 @@ const styles = {
     fontSize: '0.9rem',
     fontFamily: "'Open Sans', sans-serif",
   },
-  tabs: {
+  layout: {
     display: 'flex',
-    gap: '4px',
-    marginBottom: '24px',
-    borderBottom: `2px solid ${BRAND.charcoalLight}`,
-    paddingBottom: '4px',
+    gap: '20px',
+    alignItems: 'flex-start',
   },
-  tab: {
-    padding: '8px 20px',
-    borderRadius: '6px 6px 0 0',
-    cursor: 'pointer',
-    fontSize: '0.9rem',
-    fontWeight: 600,
+  sidebar: {
+    width: '185px',
+    flexShrink: 0,
+    position: 'sticky',
+    top: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '18px',
+  },
+  sideGroupLabel: {
+    fontSize: '0.68rem',
+    letterSpacing: '2px',
+    textTransform: 'uppercase',
+    color: `${BRAND.cream}70`,
+    fontFamily: "'Oswald', sans-serif",
+    marginBottom: '6px',
+    paddingLeft: '10px',
+  },
+  sideItem: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+    width: '100%',
+    textAlign: 'left',
+    padding: '8px 10px',
+    borderRadius: '6px',
     border: 'none',
-    transition: 'background 0.2s',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    fontWeight: 600,
     fontFamily: "'Oswald', sans-serif",
     letterSpacing: '1px',
     textTransform: 'uppercase',
+    transition: 'background 0.15s',
   },
   panel: {
     background: BRAND.charcoalDark,
@@ -163,7 +185,16 @@ const styles = {
   deviceOffline: { color: `${BRAND.cream}60`, fontSize: '0.8rem' },
 };
 
-const TABS = ['Menu', 'Sides', 'Tips', 'Feedback Tips', 'Checklists', 'Hold Times', 'Service Hours', 'Dining Options', 'Settings', 'Devices', 'Webhooks', 'Analytics', 'Shift Summary', 'Item Performance', 'Maintenance'];
+// Sidebar navigation, grouped by what the admin is trying to do:
+// Content = what the kitchen display shows, Operations = how stores
+// run, Insights = read-only analytics, System = plumbing/health.
+const TAB_GROUPS = [
+  { label: 'Content', tabs: ['Menu', 'Sides', 'Tips', 'Feedback Tips', 'Checklists'] },
+  { label: 'Operations', tabs: ['Hold Times', 'Service Hours', 'Dining Options', 'Settings'] },
+  { label: 'Insights', tabs: ['Analytics', 'Shift Summary', 'Item Performance'] },
+  { label: 'System', tabs: ['Devices', 'Webhooks', 'Maintenance'] },
+];
+const TABS = TAB_GROUPS.flatMap((g) => g.tabs);
 
 const ALLOWED_STATIONS = ['oven', 'grill', 'fryer', 'line', 'cold', 'hot_hold', 'grab'];
 
@@ -868,6 +899,36 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [activeTab, setActiveTab] = useState('Menu');
+
+  // Remember where the admin was working across reloads. Restored in an
+  // effect (not the useState initializer) so SSR markup stays stable.
+  // A URL-provided store always wins over the remembered one. The
+  // `hydrated` flag keeps the persist effects quiet until the restore
+  // has landed — without it, the mount-time persist writes the default
+  // tab over the saved one (visible under StrictMode's double-mount).
+  const [navHydrated, setNavHydrated] = useState(false);
+  useEffect(() => {
+    try {
+      const savedTab = localStorage.getItem('lc-admin-tab');
+      if (savedTab && TABS.includes(savedTab)) setActiveTab(savedTab);
+      if (!initialStoreId) {
+        const savedStore = localStorage.getItem('lc-admin-store');
+        if (savedStore && STORE_OPTIONS.some((s) => s.slug === savedStore)) setStoreId(savedStore);
+      }
+    } catch { /* ignore */ }
+    setNavHydrated(true);
+  }, [initialStoreId]);
+  useEffect(() => {
+    if (!navHydrated) return;
+    try { localStorage.setItem('lc-admin-tab', activeTab); } catch { /* ignore */ }
+  }, [navHydrated, activeTab]);
+  useEffect(() => {
+    if (!navHydrated) return;
+    try {
+      if (storeId) localStorage.setItem('lc-admin-store', storeId);
+      else localStorage.removeItem('lc-admin-store');
+    } catch { /* ignore */ }
+  }, [navHydrated, storeId]);
   const [config, setConfig] = useState(null);
   const [devices, setDevices] = useState([]);
   const [hideOfflineDevices, setHideOfflineDevices] = useState(true);
@@ -3126,7 +3187,18 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           </div>
           <div>
             <div style={{ ...styles.subtitle, fontSize: '0.85rem', color: BRAND.gold, letterSpacing: '2px', textTransform: 'uppercase', fontFamily: "'Oswald', sans-serif", fontWeight: 700 }}>Admin</div>
-            <div style={styles.subtitle}>Brand-wide</div>
+            {/* Scope of the ACTIVE tab, not a static label: per-store
+                tabs show which store you're editing (or a nudge to pick
+                one); brand tabs always say Brand-wide. */}
+            {PER_STORE_TABS.has(activeTab) ? (
+              <div style={{ ...styles.subtitle, color: storeId ? BRAND.gold : '#F2C94C' }}>
+                {storeId
+                  ? (STORE_OPTIONS.find((s) => s.slug === storeId)?.name || storeId)
+                  : 'No store selected'}
+              </div>
+            ) : (
+              <div style={styles.subtitle}>Brand-wide</div>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -3162,34 +3234,73 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
         </div>
       </div>
 
-      <div style={styles.tabs}>
-        {TABS.map((tab) => (
-          <button key={tab} style={{
-            ...styles.tab,
-            background: activeTab === tab ? BRAND.gold : BRAND.charcoalDark,
-            color: activeTab === tab ? BRAND.charcoal : BRAND.cream,
-          }} onClick={() => setActiveTab(tab)}>
-            {tab}
-          </button>
-        ))}
-      </div>
+      <div style={styles.layout}>
+        <nav style={styles.sidebar}>
+          {TAB_GROUPS.map((group) => (
+            <div key={group.label}>
+              <div style={styles.sideGroupLabel}>{group.label}</div>
+              {group.tabs.map((tab) => {
+                const active = activeTab === tab;
+                const perStore = PER_STORE_TABS.has(tab);
+                return (
+                  <button
+                    key={tab}
+                    style={{
+                      ...styles.sideItem,
+                      background: active ? BRAND.gold : 'transparent',
+                      color: active ? BRAND.charcoal : BRAND.cream,
+                    }}
+                    onClick={() => setActiveTab(tab)}
+                    title={perStore
+                      ? `Per-store — ${storeId ? (STORE_OPTIONS.find((s) => s.slug === storeId)?.name || storeId) : 'pick a store'}`
+                      : 'Brand-wide'}
+                  >
+                    <span>{tab}</span>
+                    {/* Scope dot: per-store tabs carry a marker — gold
+                        when a store is selected, amber when the tab
+                        still needs one. Brand-wide tabs have none. */}
+                    {perStore && (
+                      <span style={{
+                        width: '6px',
+                        height: '6px',
+                        borderRadius: '50%',
+                        flexShrink: 0,
+                        background: active ? BRAND.charcoal : (storeId ? BRAND.gold : '#F2C94C'),
+                      }} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
 
-      {/* Per-store tabs require a store; show a friendly empty state
-          prompting the admin to pick one if they haven't yet. Brand-
-          wide tabs always render. */}
-      {PER_STORE_TABS.has(activeTab) && !storeId ? (
-        <div style={{ ...styles.panel, textAlign: 'center', padding: '60px 20px' }}>
-          <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🏪</div>
-          <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: '1.2rem', letterSpacing: '2px', color: BRAND.gold, textTransform: 'uppercase', marginBottom: '8px' }}>
-            Pick a store
-          </div>
-          <div style={{ color: BRAND.cream, fontSize: '0.9rem' }}>
-            The <strong>{activeTab}</strong> tab shows per-store data. Use the dropdown in the header to choose which store you&apos;re looking at.
-          </div>
-        </div>
-      ) : (
-        tabRenderers[activeTab]?.()
-      )}
+        <main style={{ flex: 1, minWidth: 0 }}>
+          {/* Per-store tabs require a store; show a friendly empty state
+              with one-click store selection if they haven't picked yet.
+              Brand-wide tabs always render. */}
+          {PER_STORE_TABS.has(activeTab) && !storeId ? (
+            <div style={{ ...styles.panel, textAlign: 'center', padding: '60px 20px' }}>
+              <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🏪</div>
+              <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: '1.2rem', letterSpacing: '2px', color: BRAND.gold, textTransform: 'uppercase', marginBottom: '8px' }}>
+                Pick a store
+              </div>
+              <div style={{ color: BRAND.cream, fontSize: '0.9rem' }}>
+                The <strong>{activeTab}</strong> tab shows per-store data. Choose one:
+              </div>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap', marginTop: '16px' }}>
+                {STORE_OPTIONS.map((s) => (
+                  <button key={s.slug} style={styles.btnSecondary} onClick={() => setStoreId(s.slug)}>
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            tabRenderers[activeTab]?.()
+          )}
+        </main>
+      </div>
 
       {dirty && (
         <div style={styles.saveBar}>
