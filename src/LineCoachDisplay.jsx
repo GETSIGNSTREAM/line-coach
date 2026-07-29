@@ -501,6 +501,110 @@ function SideThumbRow({ sides, thumbPx, menuItems, configSides, prefix, style = 
   );
 }
 
+// Compact side chips for the order-card rail: a VERTICAL stack beside
+// the entree photo (or a horizontal wrap row for order-level sides).
+// Each chip = small thumb + name to its right, so sides sit in the
+// same eye line as the entree — photo → sides → copy — instead of a
+// heavy row below. SideThumbRow (caption-under-photo cells) remains
+// for focus mode.
+function SideStack({ sides, dense = false, horizontal = false, menuItems, configSides, prefix }) {
+  const list = (sides || []).filter((sd) => sd && (typeof sd === 'string' ? sd : sd.name));
+  if (list.length === 0) return null;
+  const thumb = dense ? 40 : 52;
+  const captionPx = dense ? 11 : 13;
+  const pillPx = dense ? 10 : 11;
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: horizontal ? 'row' : 'column',
+      flexWrap: horizontal ? 'wrap' : 'nowrap',
+      gap: '6px',
+      alignItems: horizontal ? 'center' : 'stretch',
+    }}>
+      {prefix && (
+        <div style={{
+          alignSelf: 'center',
+          color: BRAND.gold,
+          fontFamily: "'Oswald', sans-serif",
+          fontWeight: 700,
+          fontSize: `${Math.round(thumb / 2.4)}px`,
+          lineHeight: 1,
+          flexShrink: 0,
+        }}>{prefix}</div>
+      )}
+      {list.map((side, i) => {
+        const name = typeof side === 'string' ? side : side.name;
+        const qty = (typeof side === 'object' && side.quantity) || 1;
+        const sizeTag = (typeof side === 'object' && side.size && side.size !== 'regular')
+          ? (side.size === 'large' ? 'LG' : 'SM')
+          : null;
+        return (
+          <div key={`${name}-${i}`} style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: BRAND.charcoalLight,
+            borderRadius: '6px',
+            padding: '4px',
+            minWidth: 0,
+            ...(horizontal ? { paddingRight: '10px' } : {}),
+          }}>
+            {/* Badges on a relative wrapper — FoodPhoto's
+                overflow:hidden would clip the overhanging qty pill. */}
+            <div style={{ position: 'relative', width: `${thumb}px`, height: `${thumb}px`, flexShrink: 0 }}>
+              <FoodPhoto
+                src={getSideImageUrl(name, menuItems, configSides)}
+                alt={name}
+                style={{ width: '100%', height: '100%', borderRadius: '5px' }}
+              />
+              {qty > 1 && (
+                <div style={{
+                  position: 'absolute',
+                  top: '-4px',
+                  right: '-4px',
+                  background: BRAND.gold,
+                  color: BRAND.charcoalDark,
+                  fontFamily: "'Oswald', sans-serif",
+                  fontWeight: 700,
+                  fontSize: `${pillPx}px`,
+                  lineHeight: 1.3,
+                  padding: '0 5px',
+                  borderRadius: '8px',
+                }}>{qty}x</div>
+              )}
+              {sizeTag && (
+                <div style={{
+                  position: 'absolute',
+                  bottom: '2px',
+                  right: '2px',
+                  background: BRAND.gold,
+                  color: BRAND.charcoalDark,
+                  fontFamily: "'Oswald', sans-serif",
+                  fontWeight: 700,
+                  fontSize: `${pillPx}px`,
+                  lineHeight: 1.3,
+                  padding: '0 4px',
+                  borderRadius: '3px',
+                }}>{sizeTag}</div>
+              )}
+            </div>
+            <div style={{
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              color: BRAND.cream,
+              fontSize: `${captionPx}px`,
+              lineHeight: 1.15,
+              letterSpacing: '0.5px',
+              minWidth: 0,
+            }}>{name}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Component ───────────────────────────────────────────
 
 export default function LineCoachDisplay({ storeId }) {
@@ -2426,7 +2530,6 @@ export default function LineCoachDisplay({ storeId }) {
               // accuracy depends on these being legible at distance.
               const modifierSize = isComfortable ? '2.5rem' : '2.2rem';
               const sidesLineSize = isComfortable ? '2.5rem' : '2.2rem';
-              const sidesIndent = isComfortable ? '216px' : '156px';
 
               return (
                 <>
@@ -2434,18 +2537,33 @@ export default function LineCoachDisplay({ storeId }) {
                     const diningLabel = order.diningOption || '';
                     const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
                     const ticketBorderColor = order.priority === 'rush' ? BRAND.red : order.ticketColor;
-                    // Per-item side pairing: post-deploy orders carry
-                    // each entree's extracted sides on the item itself,
-                    // so "w/ ..." renders directly under its entree.
-                    // The order-level line then only lists à la carte
-                    // sides ("+ ..."). Legacy rows (no item.sides key)
-                    // keep the old order-level "w/" line.
-                    const itemsCarrySides = order.items.some((it) => Array.isArray(it.sides));
-                    const looseSides = itemsCarrySides
-                      ? order.sides.filter((side) => side && side.alaCarte)
-                      : order.sides;
-                    const sidesText = formatSideList(looseSides);
-                    const sidesPrefix = itemsCarrySides ? '+' : 'w/';
+                    // Per-item side pairing with strict attribution:
+                    //  1. An entree's rail shows item.sides (from THAT
+                    //     Toast selection's modifiers) and nothing else.
+                    //  2. Unattached non-à-la-carte order-level sides
+                    //     (legacy rows; meal sides rung as separate
+                    //     lines) re-attach ONLY when the order has
+                    //     exactly one entree — the only possible owner.
+                    //  3. Anything still ambiguous renders in a labeled
+                    //     SIDES · ORDER row at the card bottom — never
+                    //     visually attached to whichever item happens
+                    //     to sit above it (the #1047 mispairing).
+                    const itemsCarrySides = order.items.some((it) => Array.isArray(it.sides) && it.sides.length > 0);
+                    const unattachedSides = itemsCarrySides
+                      ? (order.sides || []).filter((side) => side && side.alaCarte)
+                      : (order.sides || []);
+                    const nonAlaCarteUnattached = unattachedSides.filter((side) => side && !side.alaCarte);
+                    const reattachToSolo = !itemsCarrySides && order.items.length === 1 && nonAlaCarteUnattached.length > 0;
+                    const soloExtraSides = reattachToSolo ? nonAlaCarteUnattached : [];
+                    const looseSides = reattachToSolo
+                      ? unattachedSides.filter((side) => side && side.alaCarte)
+                      : unattachedSides;
+                    const looseAllAlaCarte = looseSides.length > 0 && looseSides.every((side) => side && side.alaCarte);
+                    const cardHasSides = itemsCarrySides || soloExtraSides.length > 0 || looseSides.length > 0;
+                    const railW = isComfortable ? 140 : 120;
+                    // x-offset of the text column, for order-level rows
+                    // (loose sides, notes) to align with the copy above.
+                    const textIndent = `${parseInt(photoSize, 10) + 12 + (cardHasSides ? railW + 12 : 0)}px`;
                     // Allergy / dietary callout: rendered as a full-width
                     // red banner ABOVE the order row so cooks can't miss
                     // it. Other notes still render inline below the items.
@@ -2762,18 +2880,21 @@ export default function LineCoachDisplay({ storeId }) {
                             const stationStyle = station ? STATION_STYLES[station] : null;
                             const stationLabel = station ? STATION_LABELS[station] : null;
                             const menuMatch = menuItems.find((m) => m.name === item.name);
+                            const railSides = [
+                              ...(Array.isArray(item.sides) ? item.sides : []),
+                              ...(ii === 0 ? soloExtraSides : []),
+                            ];
+                            // Three-column item row: photo | side rail |
+                            // copy. One visual rail on the left, all text
+                            // fills the right — the eye scans one line:
+                            // photo → sides → words.
                             return (
                             <div key={ii} style={{
                               display: 'flex',
-                              flexDirection: 'column',
-                              gap: '2px',
-                              minWidth: 0,
-                            }}>
-                            <div style={{
-                              display: 'flex',
-                              alignItems: 'center',
                               gap: '12px',
                               minWidth: 0,
+                              alignItems: 'flex-start',
+                              ...(ii > 0 ? { borderTop: `1px solid ${BRAND.charcoalLight}`, paddingTop: '10px', marginTop: '8px' } : {}),
                             }}>
                               <FoodPhoto
                                 src={getSideImageUrl(item.name, menuItems, configSides)}
@@ -2784,78 +2905,108 @@ export default function LineCoachDisplay({ storeId }) {
                                   borderRadius: '8px',
                                 }}
                               />
-                              {stationStyle && stationLabel && (
-                                <div style={{
-                                  ...stationStyle,
-                                  fontFamily: "'Oswald', sans-serif",
-                                  fontWeight: 700,
-                                  fontSize: isComfortable ? '1rem' : '0.85rem',
-                                  letterSpacing: '1.5px',
-                                  padding: isComfortable ? '5px 10px' : '3px 8px',
-                                  borderRadius: '4px',
-                                  flexShrink: 0,
-                                  whiteSpace: 'nowrap',
-                                }}>{stationLabel}</div>
+                              {cardHasSides && (
+                                // Fixed-width rail so every text column in
+                                // the card starts at the same x; items
+                                // without sides get the empty spacer.
+                                <div style={{ width: `${railW}px`, flexShrink: 0 }}>
+                                  <SideStack
+                                    sides={railSides}
+                                    dense={!isComfortable}
+                                    menuItems={menuItems}
+                                    configSides={configSides}
+                                  />
+                                </div>
                               )}
                               <div style={{
-                                fontSize: entreeNameSize,
-                                fontWeight: 700,
-                                color: BRAND.bone,
-                                fontFamily: "'Oswald', sans-serif",
-                                textTransform: 'uppercase',
-                                whiteSpace: 'nowrap',
-                                flexShrink: 0,
+                                flex: 1,
+                                minWidth: 0,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '4px',
                               }}>
-                                {item.quantity > 1 && (
-                                  <span style={{ color: BRAND.gold, marginRight: '6px' }}>{item.quantity}x</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flexWrap: 'wrap' }}>
+                                  {stationStyle && stationLabel && (
+                                    <div style={{
+                                      ...stationStyle,
+                                      fontFamily: "'Oswald', sans-serif",
+                                      fontWeight: 700,
+                                      fontSize: isComfortable ? '1rem' : '0.85rem',
+                                      letterSpacing: '1.5px',
+                                      padding: isComfortable ? '5px 10px' : '3px 8px',
+                                      borderRadius: '4px',
+                                      flexShrink: 0,
+                                      whiteSpace: 'nowrap',
+                                    }}>{stationLabel}</div>
+                                  )}
+                                  <div style={{
+                                    fontSize: entreeNameSize,
+                                    fontWeight: 700,
+                                    color: BRAND.bone,
+                                    fontFamily: "'Oswald', sans-serif",
+                                    textTransform: 'uppercase',
+                                    lineHeight: 1.1,
+                                    minWidth: 0,
+                                  }}>
+                                    {item.quantity > 1 && (
+                                      <span style={{ color: BRAND.gold, marginRight: '6px' }}>{item.quantity}x</span>
+                                    )}
+                                    {item.name}
+                                  </div>
+                                </div>
+                                {/* Modifiers under the name fill the right
+                                    column. One per line, deviations gold
+                                    first; cosmetic restatements filtered by
+                                    classifyModifier. */}
+                                <ModifierLines modifiers={item.modifiers} size={modifierSize} />
+                                <AccuracyNote note={menuMatch?.accuracy_note} language={language} size={modifierSize} />
+                                {isComfortable && (
+                                  <CoachLine tip={menuMatch?.coach_tip} language={language} size={modifierSize} />
                                 )}
-                                {item.name}
                               </div>
-                              {/* Modifiers fill the leftover space to the right
-                                  of the entree name. One modifier per line so
-                                  cooks scan top-to-bottom; deviations ("Sub",
-                                  "No", "Extra"...) render gold to draw the eye
-                                  first. Cosmetic restate-default modifiers
-                                  ("Regular X", "Standard X") are filtered out
-                                  entirely by classifyModifier. */}
-                              <ModifierLines modifiers={item.modifiers} size={modifierSize} style={{ flex: 1 }} />
-                            </div>
-                            {Array.isArray(item.sides) && item.sides.length > 0 && (
-                              // This entree's own sides, paired directly
-                              // beneath it — never separated from it by
-                              // cookies or other order lines. Visual-led:
-                              // photo thumbs with caption names.
-                              <SideThumbRow
-                                sides={item.sides}
-                                thumbPx={isComfortable ? 96 : 72}
-                                menuItems={menuItems}
-                                configSides={configSides}
-                                prefix="w/"
-                                style={{ paddingLeft: sidesIndent, marginTop: '4px' }}
-                              />
-                            )}
-                            <AccuracyNote note={menuMatch?.accuracy_note} language={language} size={modifierSize} style={{ paddingLeft: sidesIndent }} />
-                            {isComfortable && (
-                              <CoachLine tip={menuMatch?.coach_tip} language={language} size={modifierSize} style={{ paddingLeft: sidesIndent }} />
-                            )}
                             </div>
                             );
                           })}
-                          {sidesText && (
-                            <SideThumbRow
-                              sides={looseSides}
-                              thumbPx={isComfortable ? 96 : 72}
-                              menuItems={menuItems}
-                              configSides={configSides}
-                              prefix={sidesPrefix}
-                              style={{ paddingLeft: sidesIndent, marginTop: '4px' }}
-                            />
+                          {looseSides.length > 0 && (
+                            // Unattached sides: à-la-carte gets the '+'
+                            // glyph; anything ambiguous is labeled so it
+                            // can't be misread as the item above's.
+                            <div style={{
+                              borderTop: `1px solid ${BRAND.charcoalLight}`,
+                              marginTop: '8px',
+                              paddingTop: '8px',
+                              paddingLeft: textIndent,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              flexWrap: 'wrap',
+                            }}>
+                              {!looseAllAlaCarte && (
+                                <span style={{
+                                  fontFamily: "'Oswald', sans-serif",
+                                  fontWeight: 700,
+                                  letterSpacing: '2px',
+                                  textTransform: 'uppercase',
+                                  color: BRAND.gold,
+                                  fontSize: isComfortable ? '1rem' : '0.85rem',
+                                  flexShrink: 0,
+                                }}>{language === 'es' ? 'GUARNICIONES · ORDEN' : 'SIDES · ORDER'}</span>
+                              )}
+                              <SideStack
+                                sides={looseSides}
+                                dense={!isComfortable}
+                                horizontal
+                                menuItems={menuItems}
+                                configSides={configSides}
+                                prefix={looseAllAlaCarte ? '+' : undefined}
+                              />
+                            </div>
                           )}
                           {inlineNote && (
                             <div style={{
                               fontSize: sidesLineSize,
                               lineHeight: 1.3,
-                              paddingLeft: sidesIndent,
+                              paddingLeft: textIndent,
                               color: BRAND.gold,
                               fontWeight: 700,
                             }}>⚠ {inlineNote}</div>
