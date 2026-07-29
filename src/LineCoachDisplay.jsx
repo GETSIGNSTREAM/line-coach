@@ -819,6 +819,35 @@ export default function LineCoachDisplay({ storeId }) {
     <BirdAlertBanner pullDue={birdPullDue} shredDue={birdShredDue} language={language} onOpen={openBirdLog} />
   );
 
+  // ── Recipe reference ──────────────────────────────────
+  // Read-only step-by-step reference for everything the line executes:
+  // entrees (menu_items.build_steps) + sides (sides.build_steps), both
+  // synced from the Culinary OS Layer 3. Unlike Learn mode (slow-period
+  // practice), this opens anytime from the header chip and shows the
+  // full step list at once — mid-service lookup, not training.
+  const [recipesOpen, setRecipesOpen] = useState(false);
+  const openRecipes = useCallback(() => setRecipesOpen(true), []);
+  const closeRecipes = useCallback(() => setRecipesOpen(false), []);
+
+  const referenceRecipes = [
+    ...(config?.menu_items || []).map((m) => ({ ...m, steps: normalizeSteps(m.build_steps), kind: 'entree' })),
+    ...(config?.sides || []).map((sd) => ({ ...sd, steps: normalizeSteps(sd.build_steps), kind: 'side' })),
+  ].filter((r) => r.steps.length > 0);
+
+  const recipeHeaderProps = {
+    recipesAvailable: referenceRecipes.length > 0,
+    onRecipesOpen: openRecipes,
+  };
+  const recipeOverlay = recipesOpen && referenceRecipes.length > 0 ? (
+    <RecipeOverlay
+      recipes={referenceRecipes}
+      language={language}
+      menuItems={config?.menu_items || []}
+      configSides={config?.sides || []}
+      onClose={closeRecipes}
+    />
+  ) : null;
+
   // Shift counter for Quality Coach mode (slow period only). Fetches
   // today's stats once when the kitchen goes quiet, then every 5 min
   // while it stays quiet. Pauses during active service so we don't
@@ -1707,9 +1736,10 @@ export default function LineCoachDisplay({ storeId }) {
           onLearnToggle: toggleLearnMode,
           ...checklistHeaderProps,
           ...birdHeaderProps,
+          ...recipeHeaderProps,
         }}
         checklistNudge={<>{birdBanner}{checklistNudge}</>}
-        checklistOverlay={<>{checklistOverlay}{birdOverlay}</>}
+        checklistOverlay={<>{checklistOverlay}{birdOverlay}{recipeOverlay}</>}
       />
     );
   }
@@ -1754,11 +1784,12 @@ export default function LineCoachDisplay({ storeId }) {
           @keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
           @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
         `}</style>
-        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} />
+        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
         {birdBanner}
         {checklistNudge}
         {checklistOverlay}
         {birdOverlay}
+        {recipeOverlay}
         <div style={s.qualityCoach}>
           <div style={{ ...s.qualityLabel, ...(isFeedbackTip ? { color: BRAND.terracotta } : {}) }}>{tipLabel}</div>
           <div style={s.qualityTipBlock} key={`${qualityTipIndex}-${language}`}>
@@ -1915,10 +1946,11 @@ export default function LineCoachDisplay({ storeId }) {
             to   { opacity: 1; transform: scale(1);    }
           }
         `}</style>
-        <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} />
+        <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
         {birdBanner}
         {checklistOverlay}
         {birdOverlay}
+        {recipeOverlay}
 
         <div
           {...focusOrderHandlers}
@@ -2325,10 +2357,11 @@ export default function LineCoachDisplay({ storeId }) {
           to   { opacity: 1; }
         }
       `}</style>
-      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} />
+      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
       {birdBanner}
       {checklistOverlay}
       {birdOverlay}
+      {recipeOverlay}
       {bumpedToast && (
         <UndoToast orderNum={bumpedToast.orderNum} onUndo={handleUndo} />
       )}
@@ -4175,6 +4208,205 @@ function ChecklistOverlay({ checklists, language, onClose, onToggle, onComplete 
   );
 }
 
+// ── Recipe reference overlay ────────────────────────────
+// Read-only browser over every entree and side with synced build
+// steps: photo grid grouped ENTREES / SIDES → full recipe view with
+// ALL steps visible and scrollable (mid-service lookup — a cook scans
+// to the step they need; one-step-at-a-time paging lives in Learn
+// mode, the practice surface). 3-min idle close like the other
+// overlays.
+const RECIPE_IDLE_MS = 180_000;
+
+function RecipeOverlay({ recipes, language, menuItems, configSides, onClose }) {
+  const es = language === 'es';
+  const [activeKey, setActiveKey] = useState(null); // `${kind}|${name}`
+  const [lastTouch, setLastTouch] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setTimeout(onClose, RECIPE_IDLE_MS);
+    return () => clearTimeout(t);
+  }, [lastTouch, onClose]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const active = recipes.find((r) => `${r.kind}|${r.name}` === activeKey) || null;
+
+  const label = {
+    fontFamily: "'Oswald', sans-serif",
+    fontWeight: 700,
+    letterSpacing: '2px',
+    textTransform: 'uppercase',
+  };
+  const chip = {
+    ...label,
+    padding: '10px 20px',
+    borderRadius: '999px',
+    background: 'transparent',
+    color: `${BRAND.gold}CC`,
+    border: `1px solid ${BRAND.gold}55`,
+    fontSize: 'clamp(0.8rem, 1.1vw, 1.1rem)',
+    cursor: 'pointer',
+    minHeight: '44px',
+    minWidth: '64px',
+  };
+
+  const renderGroup = (title, group) => group.length > 0 && (
+    <>
+      <div style={{ ...label, color: BRAND.gold, fontSize: 'clamp(0.9rem, 1.2vw, 1.2rem)', margin: '18px 0 10px' }}>
+        {title}
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+        gap: '14px',
+      }}>
+        {group.map((r) => (
+          <button
+            key={`${r.kind}|${r.name}`}
+            type="button"
+            onClick={() => setActiveKey(`${r.kind}|${r.name}`)}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '14px',
+              borderRadius: '12px',
+              background: BRAND.charcoalLight,
+              border: `1px solid ${BRAND.gold}30`,
+              cursor: 'pointer',
+              minHeight: '120px',
+            }}
+          >
+            <FoodPhoto
+              src={getSideImageUrl(r.name, menuItems, configSides)}
+              alt={r.name}
+              style={{ width: '120px', height: '120px', borderRadius: '10px' }}
+            />
+            <span style={{ ...label, color: BRAND.bone, fontSize: 'clamp(0.9rem, 1.1vw, 1.1rem)', letterSpacing: '1px', textAlign: 'center' }}>
+              {r.name}
+            </span>
+            <span style={{ ...label, color: `${BRAND.cream}80`, fontSize: '0.75rem', letterSpacing: '1.5px' }}>
+              {r.steps.length} {es ? 'pasos' : 'steps'}
+            </span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+
+  let body;
+  if (!active) {
+    body = (
+      <>
+        {renderGroup(es ? 'PLATOS' : 'ENTREES', recipes.filter((r) => r.kind === 'entree'))}
+        {renderGroup(es ? 'GUARNICIONES' : 'SIDES', recipes.filter((r) => r.kind === 'side'))}
+      </>
+    );
+  } else {
+    const manySteps = active.steps.length > 6;
+    body = (
+      <>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '16px' }}>
+          <button type="button" style={chip} onClick={() => setActiveKey(null)}>
+            ← {es ? 'RECETAS' : 'RECIPES'}
+          </button>
+          <span style={{ ...label, color: BRAND.bone, fontSize: 'clamp(1.1rem, 1.6vw, 1.6rem)' }}>
+            {active.name}
+          </span>
+          <span style={{ ...label, color: `${BRAND.cream}80`, fontSize: 'clamp(0.85rem, 1.1vw, 1.1rem)' }}>
+            {active.steps.length} {es ? 'pasos' : 'steps'}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 'clamp(18px, 3vw, 40px)', alignItems: 'flex-start' }}>
+          <FoodPhoto
+            src={getSideImageUrl(active.name, menuItems, configSides)}
+            alt={active.name}
+            style={{ width: 'clamp(140px, 22vh, 240px)', height: 'clamp(140px, 22vh, 240px)', borderRadius: '12px', flexShrink: 0 }}
+          />
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: manySteps ? '10px' : '14px',
+            minWidth: 0,
+            flex: 1,
+          }}>
+            {active.steps.map((step, si) => {
+              const stepText = pickTipText(step, language);
+              if (!stepText) return null;
+              return (
+                <div key={si} style={{ display: 'flex', gap: '14px', alignItems: 'baseline', textAlign: 'left' }}>
+                  <span style={{
+                    flexShrink: 0,
+                    minWidth: '1.8em',
+                    color: BRAND.blue,
+                    fontFamily: "'Oswald', sans-serif",
+                    fontWeight: 700,
+                    fontSize: manySteps ? 'clamp(1rem, 1.4vw, 1.4rem)' : 'clamp(1.1rem, 1.7vw, 1.7rem)',
+                  }}>{si + 1}.</span>
+                  <span style={{
+                    fontSize: manySteps ? 'clamp(1rem, 1.5vw, 1.5rem)' : 'clamp(1.1rem, 1.8vw, 1.8rem)',
+                    color: language === 'en' ? BRAND.bone : BRAND.cream,
+                    fontFamily: "'Playfair Display', Georgia, serif",
+                    lineHeight: 1.35,
+                    fontStyle: es ? 'italic' : 'normal',
+                  }}>{stepText}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0, 0, 0, 0.72)',
+        zIndex: 900,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={() => setLastTouch(Date.now())}
+        style={{
+          width: 'min(1100px, 96vw)',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+          background: BRAND.charcoalDark,
+          border: `2px solid ${BRAND.gold}`,
+          borderRadius: '16px',
+          padding: 'clamp(18px, 3vw, 32px)',
+          boxSizing: 'border-box',
+        }}
+      >
+        {!active && (
+          <div style={{ ...label, color: BRAND.gold, fontSize: 'clamp(1rem, 1.5vw, 1.5rem)', textAlign: 'center' }}>
+            {es ? 'RECETAS — REFERENCIA' : 'RECIPES — REFERENCE'}
+          </div>
+        )}
+        {body}
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '20px' }}>
+          <button type="button" style={chip} onClick={onClose}>
+            {es ? 'CERRAR' : 'CLOSE'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Learn mode screen ───────────────────────────────────
 // Slow-period training surface. Three views in one component:
 //   session === null          → attract: auto-rotating walkthrough,
@@ -4584,7 +4816,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
   );
 }
 
-function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, learnAllowed = false, learnMode = false, onLearnToggle, checklistAvailable = false, checklistDue = 0, onChecklistOpen, birdAvailable = false, birdCookingQty = 0, birdHoldingQty = 0, birdAlert = 0, onBirdOpen }) {
+function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, learnAllowed = false, learnMode = false, onLearnToggle, checklistAvailable = false, checklistDue = 0, onChecklistOpen, birdAvailable = false, birdCookingQty = 0, birdHoldingQty = 0, birdAlert = 0, onBirdOpen, recipesAvailable = false, onRecipesOpen }) {
   return (
     <div style={s.header}>
       <div style={s.headerLeft}>
@@ -4655,6 +4887,36 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, l
             }}
           >
             LEARN
+          </button>
+        )}
+        {recipesAvailable && onRecipesOpen && (
+          // Recipe reference chip — read-only step-by-step for every
+          // entree and side with synced build steps. Reference, not
+          // training: Learn mode stays the practice surface.
+          <button
+            type="button"
+            onClick={onRecipesOpen}
+            aria-label="Open recipe reference"
+            title="Recipes — step-by-step reference"
+            style={{
+              padding: '8px 14px',
+              borderRadius: '999px',
+              background: 'transparent',
+              color: `${BRAND.gold}AA`,
+              border: `1px solid ${BRAND.gold}55`,
+              fontSize: '0.8rem',
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              letterSpacing: '2px',
+              cursor: 'pointer',
+              minHeight: '44px',
+              minWidth: '64px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {language === 'es' ? 'RECETAS' : 'RECIPES'}
           </button>
         )}
         {birdAvailable && onBirdOpen && (

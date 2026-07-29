@@ -917,6 +917,9 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   const [stepsEditorIndex, setStepsEditorIndex] = useState(null);
   // Checklists — items editor modal (index into checklists, null = closed).
   const [checklistEditorIndex, setChecklistEditorIndex] = useState(null);
+  // Sides — build-steps editor modal (index into sides, null = closed).
+  // Sides get recipe steps too (Recipes reference on the display).
+  const [sideStepsEditorIndex, setSideStepsEditorIndex] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
   const [maintStats, setMaintStats] = useState(null);
@@ -1207,7 +1210,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
       });
       const json = await res.json();
       if (res.ok && json.status === 'ok') {
-        const parts = [`Synced ${json.matched} of ${json.recipes_found} recipes`];
+        const parts = [`Synced ${json.matched} entree${json.matched === 1 ? '' : 's'} + ${json.matched_sides ?? 0} side${(json.matched_sides ?? 0) === 1 ? '' : 's'} of ${json.recipes_found} recipes`];
         if (json.unmatched_recipes?.length) parts.push(`unmatched: ${json.unmatched_recipes.join(', ')}`);
         if (json.no_steps?.length) parts.push(`no steps found: ${json.no_steps.join(', ')}`);
         if (json.errors?.length) parts.push(`errors: ${json.errors.length}`);
@@ -1575,6 +1578,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
               <th style={styles.th}>Station</th>
               <th style={styles.th}>Cook Time</th>
               <th style={styles.th}>Batch Size</th>
+              <th style={{ ...styles.th, width: '110px' }}>Build Steps</th>
               <th style={styles.th}>Actions</th>
             </tr>
           </thead>
@@ -1608,6 +1612,11 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
                     onChange={(e) => { const u = [...items]; u[i] = { ...item, batch_size: parseInt(e.target.value) || 1 }; updateConfig('sides', u); }} />
                 </td>
                 <td style={styles.td}>
+                  <button style={styles.btnSecondary} onClick={() => setSideStepsEditorIndex(i)}>
+                    Steps ({(item.build_steps || []).length})
+                  </button>
+                </td>
+                <td style={styles.td}>
                   <button style={styles.btnSecondary} onClick={() => { updateConfig('sides', items.filter((_, idx) => idx !== i)); }}>Remove</button>
                 </td>
               </tr>
@@ -1618,6 +1627,21 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           onClick={() => { updateConfig('sides', [...items, { name: '', station: 'hot_hold', cook_time: 0, batch_size: 4 }]); }}>
           + Add Side
         </button>
+        {sideStepsEditorIndex != null && items[sideStepsEditorIndex] && (
+          <StepsEditorModal
+            item={items[sideStepsEditorIndex]}
+            onClose={() => setSideStepsEditorIndex(null)}
+            onSave={(steps) => {
+              const u = [...items];
+              const next = { ...items[sideStepsEditorIndex] };
+              if (steps.length > 0) next.build_steps = steps;
+              else { delete next.build_steps; delete next.build_steps_synced_at; }
+              u[sideStepsEditorIndex] = next;
+              updateConfig('sides', u);
+              setSideStepsEditorIndex(null);
+            }}
+          />
+        )}
       </div>
     );
   }
