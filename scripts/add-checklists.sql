@@ -16,6 +16,12 @@
 -- the PREVIOUS business date (see checklistWindowState in
 -- lib/line-coach.js).
 
+-- Template storage: lc_brand_config predates this feature, so the
+-- checklists column must be added explicitly (like service_hours and
+-- friends were) or the brand upsert in updateConfig fails for EVERY
+-- admin tab the moment a checklist is saved.
+ALTER TABLE lc_brand_config ADD COLUMN IF NOT EXISTS checklists JSONB NOT NULL DEFAULT '[]';
+
 CREATE TABLE IF NOT EXISTS lc_checklist_runs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   store_id TEXT NOT NULL,
