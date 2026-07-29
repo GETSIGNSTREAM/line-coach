@@ -164,6 +164,32 @@ function trimAllergyPrefix(notes) {
   return String(notes).replace(/^\s*allerg(?:y|ens?|ic)\s*[:.\-—]\s*/i, '').trim();
 }
 
+// Packaging pseudo-items ("YES, INCLUDE UTENSILS!", "No Utensils",
+// "Napkins & Cutlery") come through Toast as $0 menu items. They're
+// packing instructions, not food — getOrderSequence pulls them out of
+// the item list and the card renders them as a gold callout banner so
+// they never occupy an entree row (photo, station badge) or push real
+// food down the card.
+const PACKAGING_ITEM_RE = /\b(utensils?|napkins?|cutlery|silverware|plasticware|chopsticks?)\b/i;
+function isPackagingItem(name) {
+  return PACKAGING_ITEM_RE.test(name || '');
+}
+
+// One "w/ ..." fragment from a side list — qty prefix and LG/SM size
+// tag. Shared by the per-item pairing line, the order-level à-la-carte
+// line, and focus mode so every surface formats sides identically.
+function formatSideList(sides) {
+  return (sides || []).map((side) => {
+    const sn = typeof side === 'string' ? side : side.name;
+    const sq = (typeof side === 'object' && side.quantity) || 1;
+    const size = (typeof side === 'object' && side.size && side.size !== 'regular')
+      ? ` (${side.size === 'large' ? 'LG' : 'SM'})`
+      : '';
+    const label = `${sn}${size}`;
+    return sq > 1 ? `${sq}x ${label}` : label;
+  }).join(', ');
+}
+
 // Side / item name → image URL. If the brand config has an explicit
 // image_url for this name, use that (Supabase Storage). Otherwise fall
 // back to the legacy /sides/<slug>.jpg path so existing photos still work.
@@ -1397,7 +1423,12 @@ export default function LineCoachDisplay({ storeId }) {
       })
       .map((order) => {
         let maxCookTime = 0;
-        const items = (order.items || []).map((item) => {
+        // Packaging pseudo-items split off here (the one mapping choke
+        // point) so every surface — card, focus mode, detail sheet —
+        // sees clean food items plus a `packaging` callout list.
+        const rawItems = order.items || [];
+        const packaging = rawItems.filter((it) => isPackagingItem(it?.name)).map((it) => it.name);
+        const items = rawItems.filter((it) => !isPackagingItem(it?.name)).map((item) => {
           const menuMatch = menuItems.find((m) => m.name === item.name);
           const cookTime = menuMatch?.cook_time || 0;
           if (cookTime > maxCookTime) maxCookTime = cookTime;
@@ -1419,6 +1450,7 @@ export default function LineCoachDisplay({ storeId }) {
           orderNum: order.order_number || '—',
           customerName: order.customer_name || null,
           items,
+          packaging,
           sides: order.sides || [],
           notes: order.notes || null,
           // Guard: older rows + Toast variants we haven't mapped store
@@ -1674,15 +1706,7 @@ export default function LineCoachDisplay({ storeId }) {
     };
     const diningLabel = order.diningOption || '';
     const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
-    const sidesText = order.sides.map((side) => {
-      const sn = typeof side === 'string' ? side : side.name;
-      const sq = side.quantity || 1;
-      const size = (typeof side === 'object' && side.size && side.size !== 'regular')
-        ? ` (${side.size === 'large' ? 'LG' : 'SM'})`
-        : '';
-      const label = `${sn}${size}`;
-      return sq > 1 ? `${sq}x ${label}` : label;
-    }).join(', ');
+    const sidesText = formatSideList(order.sides);
     const allergyNote = isAllergyNote(order.notes) ? order.notes : null;
     const inlineNote = allergyNote ? null : order.notes;
     const sourceLabel = order.priority === 'rush' ? 'ASAP' : (diningLabel ? diningLabel.toUpperCase() : null);
@@ -1778,6 +1802,27 @@ export default function LineCoachDisplay({ storeId }) {
             <span style={{ fontSize: '2rem' }}>⚠</span>
             <span>ALLERGY</span>
             <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 700 }}>{trimAllergyPrefix(allergyNote)}</span>
+          </div>
+        )}
+
+        {order.packaging?.length > 0 && (
+          <div style={{
+            background: BRAND.gold,
+            color: BRAND.charcoal,
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 700,
+            letterSpacing: '2px',
+            textTransform: 'uppercase',
+            fontSize: 'clamp(1.2rem, 1.8vw, 1.8rem)',
+            padding: '12px 24px',
+            margin: '12px 16px 0 16px',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '14px',
+          }}>
+            <span>🍴</span>
+            <span>{order.packaging.join(' · ')}</span>
           </div>
         )}
 
@@ -2163,11 +2208,18 @@ export default function LineCoachDisplay({ storeId }) {
                     const diningLabel = order.diningOption || '';
                     const diningColor = diningColors[diningLabel.toLowerCase()] || BRAND.blue;
                     const ticketBorderColor = order.priority === 'rush' ? BRAND.red : order.ticketColor;
-                    const sidesText = order.sides.map((side) => {
-                      const sn = typeof side === 'string' ? side : side.name;
-                      const sq = side.quantity || 1;
-                      return sq > 1 ? `${sq}x ${sn}` : sn;
-                    }).join(', ');
+                    // Per-item side pairing: post-deploy orders carry
+                    // each entree's extracted sides on the item itself,
+                    // so "w/ ..." renders directly under its entree.
+                    // The order-level line then only lists à la carte
+                    // sides ("+ ..."). Legacy rows (no item.sides key)
+                    // keep the old order-level "w/" line.
+                    const itemsCarrySides = order.items.some((it) => Array.isArray(it.sides));
+                    const looseSides = itemsCarrySides
+                      ? order.sides.filter((side) => side && side.alaCarte)
+                      : order.sides;
+                    const sidesText = formatSideList(looseSides);
+                    const sidesPrefix = itemsCarrySides ? '+' : 'w/';
                     // Allergy / dietary callout: rendered as a full-width
                     // red banner ABOVE the order row so cooks can't miss
                     // it. Other notes still render inline below the items.
@@ -2320,6 +2372,28 @@ export default function LineCoachDisplay({ storeId }) {
                           <span style={{ fontSize: '1.7rem' }}>⚠</span>
                           <span style={{ fontWeight: 800 }}>ALLERGY</span>
                           <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 600 }}>{trimAllergyPrefix(allergyNote)}</span>
+                        </div>
+                      )}
+                      {order.packaging?.length > 0 && (
+                        // Packing callout (utensils / napkins) — gold
+                        // banner, not an item row. See isPackagingItem.
+                        <div style={{
+                          background: BRAND.gold,
+                          color: BRAND.charcoal,
+                          fontFamily: "'Oswald', sans-serif",
+                          fontWeight: 700,
+                          letterSpacing: '1.5px',
+                          textTransform: 'uppercase',
+                          fontSize: isComfortable ? '1.6rem' : '1.4rem',
+                          padding: isComfortable ? '10px 22px' : '8px 18px',
+                          marginBottom: '6px',
+                          borderRadius: '4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '12px',
+                        }}>
+                          <span>🍴</span>
+                          <span>{order.packaging.join(' · ')}</span>
                         </div>
                       )}
                       <div style={{
@@ -2520,6 +2594,18 @@ export default function LineCoachDisplay({ storeId }) {
                                   entirely by classifyModifier. */}
                               <ModifierLines modifiers={item.modifiers} size={modifierSize} style={{ flex: 1 }} />
                             </div>
+                            {Array.isArray(item.sides) && item.sides.length > 0 && (
+                              // This entree's own sides, paired directly
+                              // beneath it — never separated from it by
+                              // cookies or other order lines.
+                              <div style={{
+                                fontSize: sidesLineSize,
+                                lineHeight: 1.3,
+                                paddingLeft: sidesIndent,
+                                color: BRAND.white,
+                                fontWeight: 700,
+                              }}>w/ {formatSideList(item.sides)}</div>
+                            )}
                             <AccuracyNote note={menuMatch?.accuracy_note} language={language} size={modifierSize} style={{ paddingLeft: sidesIndent }} />
                             {isComfortable && (
                               <CoachLine tip={menuMatch?.coach_tip} language={language} size={modifierSize} style={{ paddingLeft: sidesIndent }} />
@@ -2537,7 +2623,7 @@ export default function LineCoachDisplay({ storeId }) {
                               flexWrap: 'wrap',
                             }}>
                               {sidesText && (
-                                <span style={{ color: BRAND.white, fontWeight: 700 }}>w/ {sidesText}</span>
+                                <span style={{ color: BRAND.white, fontWeight: 700 }}>{sidesPrefix} {sidesText}</span>
                               )}
                               {inlineNote && (
                                 <span style={{
@@ -2967,6 +3053,27 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
             <span style={{ textTransform: 'none', letterSpacing: '0.5px', fontWeight: 600 }}>
               {trimAllergyPrefix(allergyNote)}
             </span>
+          </div>
+        )}
+
+        {order.packaging?.length > 0 && (
+          <div style={{
+            background: BRAND.gold,
+            color: BRAND.charcoal,
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 700,
+            letterSpacing: '1.5px',
+            textTransform: 'uppercase',
+            fontSize: '1.2rem',
+            padding: '10px 16px',
+            borderRadius: '6px',
+            marginBottom: '20px',
+            display: 'flex',
+            gap: '12px',
+            alignItems: 'center',
+          }}>
+            <span>🍴</span>
+            <span>{order.packaging.join(' · ')}</span>
           </div>
         )}
 
