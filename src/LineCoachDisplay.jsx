@@ -515,6 +515,98 @@ export default function LineCoachDisplay({ storeId }) {
   const learnModeAllowed = config?.settings?.learn_mode_enabled === true;
   const learnModeOn = learnModeAllowed && learnMode;
 
+  // Checklists (opening / closing / prep). Templates + today's runs
+  // come from the checklist-runs endpoint, NOT the hourly config poll,
+  // so admin edits land within a minute. One request per minute per
+  // kiosk normally; 10s while the overlay is open so two tablets
+  // working the same list agree quickly. Item toggles are optimistic
+  // and reconciled by the next poll (or an immediate refetch when the
+  // server refuses — e.g. the run was signed on another tablet).
+  const [checklistOpen, setChecklistOpen] = useState(false);
+  const [checklistData, setChecklistData] = useState(null);
+
+  const fetchChecklists = useCallback(() => {
+    fetch(`/api/line-coach/checklist-runs?store=${storeId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.checklists)) setChecklistData(data);
+      })
+      .catch(() => { /* keep last good value */ });
+  }, [storeId]);
+
+  useEffect(() => {
+    fetchChecklists();
+    const interval = setInterval(fetchChecklists, checklistOpen ? 10_000 : 60_000);
+    return () => clearInterval(interval);
+  }, [fetchChecklists, checklistOpen]);
+
+  // Stable identities: ChecklistOverlay keys its idle timer on these,
+  // and the parent re-renders every second (setNow) — inline arrows
+  // would reset the 3-min idle clock every render.
+  const openChecklists = useCallback(() => setChecklistOpen(true), []);
+  const closeChecklists = useCallback(() => setChecklistOpen(false), []);
+
+  const toggleChecklist = useCallback((checklistId, itemId, checked) => {
+    setChecklistData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        checklists: prev.checklists.map((c) => {
+          if (c.id !== checklistId || c.run?.completed_at) return c;
+          const checkedItems = { ...(c.run?.checked_items || {}) };
+          if (checked) checkedItems[itemId] = { at: new Date().toISOString(), device_id: null };
+          else delete checkedItems[itemId];
+          return { ...c, run: { completed_at: null, completed_by: null, ...(c.run || {}), checked_items: checkedItems } };
+        }),
+      };
+    });
+    let deviceId = null;
+    try { deviceId = window.localStorage.getItem(`lc-device-id-${storeId}`); } catch { /* ignore */ }
+    fetch('/api/line-coach/checklist-runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ store_id: storeId, checklist_id: checklistId, item_id: itemId, checked, device_id: deviceId }),
+    })
+      .then((r) => { if (!r.ok) fetchChecklists(); })
+      .catch(() => { /* next poll reconciles */ });
+  }, [storeId, fetchChecklists]);
+
+  const completeChecklist = useCallback(async (checklistId, initials) => {
+    const res = await fetch('/api/line-coach/checklist-runs/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ store_id: storeId, checklist_id: checklistId, initials }),
+    });
+    const data = await res.json().catch(() => ({}));
+    fetchChecklists();
+    if (!res.ok) throw new Error(data.error || 'Sign-off failed');
+    return data;
+  }, [storeId, fetchChecklists]);
+
+  const checklists = checklistData?.checklists || [];
+  const dueChecklists = checklists.filter((c) => c.due_now && !c.run?.completed_at);
+
+  // Shared render pieces, spliced into every branch's return: the
+  // header chip props, the overlay (fixed-position, DOM order doesn't
+  // matter), and the slow-period nudge banner.
+  const checklistHeaderProps = {
+    checklistAvailable: checklists.length > 0,
+    checklistDue: dueChecklists.length,
+    onChecklistOpen: openChecklists,
+  };
+  const checklistOverlay = checklistOpen && checklists.length > 0 ? (
+    <ChecklistOverlay
+      checklists={checklists}
+      language={language}
+      onClose={closeChecklists}
+      onToggle={toggleChecklist}
+      onComplete={completeChecklist}
+    />
+  ) : null;
+  const checklistNudge = (
+    <ChecklistNudge dueChecklists={dueChecklists} language={language} onOpen={openChecklists} />
+  );
+
   // Shift counter for Quality Coach mode (slow period only). Fetches
   // today's stats once when the kitchen goes quiet, then every 5 min
   // while it stays quiet. Pauses during active service so we don't
@@ -1392,7 +1484,10 @@ export default function LineCoachDisplay({ storeId }) {
           learnAllowed: learnModeAllowed,
           learnMode,
           onLearnToggle: toggleLearnMode,
+          ...checklistHeaderProps,
         }}
+        checklistNudge={checklistNudge}
+        checklistOverlay={checklistOverlay}
       />
     );
   }
@@ -1433,8 +1528,13 @@ export default function LineCoachDisplay({ storeId }) {
     const onTimeLabel = language === 'es' ? 'a tiempo' : 'on time';
     return (
       <div style={s.container}>
-        <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} />
+        <style>{`
+          @keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+          @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+        `}</style>
+        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} />
+        {checklistNudge}
+        {checklistOverlay}
         <div style={s.qualityCoach}>
           <div style={{ ...s.qualityLabel, ...(isFeedbackTip ? { color: BRAND.terracotta } : {}) }}>{tipLabel}</div>
           <div style={s.qualityTipBlock} key={`${qualityTipIndex}-${language}`}>
@@ -1600,7 +1700,8 @@ export default function LineCoachDisplay({ storeId }) {
             to   { opacity: 1; transform: scale(1);    }
           }
         `}</style>
-        <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} />
+        <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} />
+        {checklistOverlay}
 
         <div
           {...focusOrderHandlers}
@@ -1985,7 +2086,8 @@ export default function LineCoachDisplay({ storeId }) {
           to   { opacity: 1; }
         }
       `}</style>
-      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} />
+      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} />
+      {checklistOverlay}
       {bumpedToast && (
         <UndoToast orderNum={bumpedToast.orderNum} onUndo={handleUndo} />
       )}
@@ -3019,6 +3121,431 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
   );
 }
 
+// ── Checklists ──────────────────────────────────────────
+// Slow-period nudge banner + the full checklist overlay. Templates
+// and completion state come from the parent's checklist-runs poll;
+// item taps are optimistic (parent reconciles on the next poll).
+
+// Banner shown on the slow-period screens while a scheduled checklist
+// is due and unsigned. Tapping opens the overlay; stopPropagation so
+// the Learn attract screen underneath doesn't also open its picker.
+function ChecklistNudge({ dueChecklists, language, onOpen }) {
+  if (dueChecklists.length === 0) return null;
+  const es = language === 'es';
+  const cl = dueChecklists[0];
+  const name = (pickTipText(cl.name, language) || (es ? 'Lista' : 'Checklist')).toUpperCase();
+  const done = Object.keys(cl.run?.checked_items || {}).length;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '14px 16px 0' }}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '14px',
+          padding: '14px 28px',
+          borderRadius: '999px',
+          background: `${BRAND.gold}15`,
+          border: `1px solid ${BRAND.gold}`,
+          color: BRAND.gold,
+          fontFamily: "'Oswald', sans-serif",
+          fontWeight: 700,
+          fontSize: 'clamp(0.9rem, 1.3vw, 1.3rem)',
+          letterSpacing: '2px',
+          textTransform: 'uppercase',
+          cursor: 'pointer',
+          minHeight: '44px',
+          animation: 'lcLearnPulse 2.4s ease-in-out infinite',
+        }}
+      >
+        <span>{name}</span>
+        <span style={{ opacity: 0.5 }}>·</span>
+        <span>{done} / {cl.items.length}</span>
+        <span style={{ opacity: 0.5 }}>·</span>
+        <span>{es ? 'TOCA PARA ABRIR' : 'TAP TO OPEN'}</span>
+        {dueChecklists.length > 1 && <span style={{ opacity: 0.7 }}>+{dueChecklists.length - 1}</span>}
+      </button>
+    </div>
+  );
+}
+
+// Full-screen checklist overlay. Modeled on OrderDetailSheet (scrim
+// click-to-close, stopPropagation, Escape) but with a 3-minute idle
+// timeout instead of the sheet's 30s auto-dismiss — someone working
+// through a closing list shouldn't have the screen yanked away.
+// Views: list of checklists → one checklist's items → initials pad.
+// The initials pad is an on-screen A–Z grid because Pi kiosks have no
+// OS keyboard.
+const CHECKLIST_IDLE_MS = 180_000;
+const INITIALS_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+function ChecklistOverlay({ checklists, language, onClose, onToggle, onComplete }) {
+  const es = language === 'es';
+  const [activeId, setActiveId] = useState(checklists.length === 1 ? checklists[0].id : null);
+  const [signing, setSigning] = useState(false);
+  const [initials, setInitials] = useState('');
+  const [errMsg, setErrMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  // Idle clock: any pointerdown on the sheet stamps lastTouch, which
+  // restarts the close timer. onClose must be referentially stable
+  // (parent useCallback) or the parent's 1s clock tick would restart
+  // the timer forever.
+  const [lastTouch, setLastTouch] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setTimeout(onClose, CHECKLIST_IDLE_MS);
+    return () => clearTimeout(t);
+  }, [lastTouch, onClose]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const active = checklists.find((c) => c.id === activeId) || null;
+  const activeChecked = active ? Object.keys(active.run?.checked_items || {}) : [];
+  const activeComplete = !!active?.run?.completed_at;
+  const allChecked = active ? active.items.every((it) => activeChecked.includes(it.id)) : false;
+
+  const fmtTime = (iso) => {
+    try { return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch { return ''; }
+  };
+
+  const label = {
+    fontFamily: "'Oswald', sans-serif",
+    fontWeight: 700,
+    letterSpacing: '2px',
+    textTransform: 'uppercase',
+  };
+  const chip = {
+    ...label,
+    padding: '10px 20px',
+    borderRadius: '999px',
+    background: 'transparent',
+    color: `${BRAND.gold}CC`,
+    border: `1px solid ${BRAND.gold}55`,
+    fontSize: 'clamp(0.8rem, 1.1vw, 1.1rem)',
+    cursor: 'pointer',
+    minHeight: '44px',
+    minWidth: '64px',
+  };
+
+  const submitInitials = async () => {
+    if (busy || !active) return;
+    setBusy(true);
+    setErrMsg('');
+    try {
+      await onComplete(active.id, initials);
+      setSigning(false);
+      setInitials('');
+    } catch (err) {
+      setErrMsg(err?.message || 'Sign-off failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  let body;
+  if (!active) {
+    // Checklist list.
+    body = (
+      <>
+        <div style={{ ...label, color: BRAND.gold, fontSize: 'clamp(1rem, 1.5vw, 1.5rem)', marginBottom: '18px' }}>
+          {es ? 'LISTAS DE HOY' : "TODAY'S CHECKLISTS"}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {checklists.map((cl) => {
+            const done = Object.keys(cl.run?.checked_items || {}).length;
+            const signed = !!cl.run?.completed_at;
+            return (
+              <button
+                key={cl.id}
+                type="button"
+                onClick={() => { setErrMsg(''); setActiveId(cl.id); }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '16px',
+                  padding: '18px 22px',
+                  minHeight: '72px',
+                  borderRadius: '12px',
+                  background: BRAND.charcoalLight,
+                  border: `1px solid ${signed ? `${BRAND.green}55` : cl.due_now ? BRAND.gold : `${BRAND.gold}30`}`,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <span style={{ ...label, color: BRAND.bone, fontSize: 'clamp(1rem, 1.5vw, 1.5rem)' }}>
+                  {pickTipText(cl.name, language) || (es ? 'Lista' : 'Checklist')}
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '12px' }}>
+                  {signed ? (
+                    <span style={{ ...label, color: BRAND.green, fontSize: 'clamp(0.9rem, 1.2vw, 1.2rem)' }}>
+                      ✓ {cl.run.completed_by} · {fmtTime(cl.run.completed_at)}
+                    </span>
+                  ) : (
+                    <>
+                      {cl.due_now && (
+                        <span style={{ ...label, color: BRAND.red, fontSize: '0.8rem', border: `1px solid ${BRAND.red}88`, borderRadius: '999px', padding: '4px 10px' }}>
+                          {es ? 'PENDIENTE' : 'DUE NOW'}
+                        </span>
+                      )}
+                      <span style={{ ...label, color: done > 0 ? BRAND.gold : `${BRAND.cream}80`, fontSize: 'clamp(0.9rem, 1.2vw, 1.2rem)' }}>
+                        {done} / {cl.items.length}
+                      </span>
+                    </>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </>
+    );
+  } else if (signing) {
+    // Initials pad.
+    body = (
+      <>
+        <div style={{ ...label, color: BRAND.gold, fontSize: 'clamp(1rem, 1.5vw, 1.5rem)', marginBottom: '8px', textAlign: 'center' }}>
+          {es ? 'TUS INICIALES' : 'YOUR INITIALS'}
+        </div>
+        <div style={{ ...label, color: `${BRAND.cream}90`, fontSize: '0.85rem', textAlign: 'center', marginBottom: '16px' }}>
+          {pickTipText(active.name, language)} · {es ? 'firma para completar' : 'sign to complete'}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '18px' }}>
+          {[0, 1, 2].map((i) => (
+            <span key={i} style={{
+              width: '64px',
+              height: '72px',
+              borderRadius: '10px',
+              border: `2px solid ${initials[i] ? BRAND.gold : `${BRAND.cream}40`}`,
+              background: BRAND.charcoalLight,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              fontSize: '2.2rem',
+              color: BRAND.bone,
+            }}>{initials[i] || ''}</span>
+          ))}
+        </div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(7, 1fr)',
+          gap: '8px',
+          maxWidth: '560px',
+          margin: '0 auto',
+        }}>
+          {INITIALS_LETTERS.map((ch) => (
+            <button
+              key={ch}
+              type="button"
+              onClick={() => setInitials((prev) => (prev.length < 3 ? prev + ch : prev))}
+              style={{
+                ...label,
+                minHeight: '56px',
+                borderRadius: '10px',
+                background: BRAND.charcoalLight,
+                border: `1px solid ${BRAND.gold}30`,
+                color: BRAND.bone,
+                fontSize: '1.3rem',
+                cursor: 'pointer',
+              }}
+            >{ch}</button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setInitials((prev) => prev.slice(0, -1))}
+            style={{
+              ...label,
+              minHeight: '56px',
+              gridColumn: 'span 2',
+              borderRadius: '10px',
+              background: BRAND.charcoalLight,
+              border: `1px solid ${BRAND.gold}30`,
+              color: BRAND.gold,
+              fontSize: '1.3rem',
+              cursor: 'pointer',
+            }}
+          >⌫</button>
+        </div>
+        {errMsg && (
+          <div style={{ color: BRAND.red, textAlign: 'center', marginTop: '14px', fontFamily: "'Oswald', sans-serif", letterSpacing: '1px' }}>
+            {errMsg}
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', marginTop: '20px' }}>
+          <button type="button" style={chip} onClick={() => { setSigning(false); setInitials(''); setErrMsg(''); }}>
+            {es ? 'CANCELAR' : 'CANCEL'}
+          </button>
+          <button
+            type="button"
+            disabled={initials.length < 2 || busy}
+            onClick={submitInitials}
+            style={{
+              ...chip,
+              background: initials.length >= 2 && !busy ? BRAND.gold : `${BRAND.gold}30`,
+              color: initials.length >= 2 && !busy ? BRAND.charcoal : `${BRAND.charcoal}90`,
+              border: 'none',
+              cursor: initials.length >= 2 && !busy ? 'pointer' : 'default',
+              padding: '10px 32px',
+            }}
+          >
+            {busy ? '…' : (es ? 'FIRMAR' : 'SIGN OFF')}
+          </button>
+        </div>
+      </>
+    );
+  } else {
+    // One checklist's items.
+    body = (
+      <>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '16px' }}>
+          {checklists.length > 1 ? (
+            <button type="button" style={chip} onClick={() => { setErrMsg(''); setActiveId(null); }}>
+              ← {es ? 'LISTAS' : 'LISTS'}
+            </button>
+          ) : <span />}
+          <span style={{ ...label, color: BRAND.bone, fontSize: 'clamp(1.1rem, 1.6vw, 1.6rem)' }}>
+            {pickTipText(active.name, language)}
+          </span>
+          <span style={{ ...label, color: `${BRAND.cream}90`, fontSize: 'clamp(0.9rem, 1.2vw, 1.2rem)' }}>
+            {activeChecked.length} / {active.items.length}
+          </span>
+        </div>
+        {activeComplete && (
+          <div style={{
+            ...label,
+            color: BRAND.green,
+            border: `1px solid ${BRAND.green}66`,
+            borderRadius: '10px',
+            padding: '12px 18px',
+            marginBottom: '14px',
+            textAlign: 'center',
+            fontSize: 'clamp(0.9rem, 1.2vw, 1.2rem)',
+          }}>
+            ✓ {es ? 'Firmado' : 'Signed'} {active.run.completed_by} · {fmtTime(active.run.completed_at)}
+          </div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {active.items.map((it) => {
+            const checked = activeChecked.includes(it.id);
+            return (
+              <button
+                key={it.id}
+                type="button"
+                disabled={activeComplete}
+                onClick={() => onToggle(active.id, it.id, !checked)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '18px',
+                  padding: '14px 18px',
+                  minHeight: '64px',
+                  borderRadius: '12px',
+                  background: BRAND.charcoalLight,
+                  border: `1px solid ${checked ? `${BRAND.gold}66` : `${BRAND.cream}25`}`,
+                  cursor: activeComplete ? 'default' : 'pointer',
+                  textAlign: 'left',
+                  opacity: checked && !activeComplete ? 0.65 : 1,
+                }}
+              >
+                <span style={{
+                  flexShrink: 0,
+                  width: '38px',
+                  height: '38px',
+                  borderRadius: '8px',
+                  background: checked ? BRAND.gold : 'transparent',
+                  border: checked ? 'none' : `2px solid ${BRAND.cream}60`,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: BRAND.charcoal,
+                  fontWeight: 700,
+                  fontSize: '1.4rem',
+                }}>{checked ? '✓' : ''}</span>
+                <span style={{
+                  fontSize: 'clamp(1.05rem, 1.5vw, 1.5rem)',
+                  color: language === 'en' ? BRAND.bone : BRAND.cream,
+                  fontFamily: "'Playfair Display', Georgia, serif",
+                  fontStyle: es ? 'italic' : 'normal',
+                  lineHeight: 1.3,
+                }}>{pickTipText(it, language)}</span>
+              </button>
+            );
+          })}
+        </div>
+        {errMsg && (
+          <div style={{ color: BRAND.red, textAlign: 'center', marginTop: '14px', fontFamily: "'Oswald', sans-serif", letterSpacing: '1px' }}>
+            {errMsg}
+          </div>
+        )}
+        {!activeComplete && allChecked && active.items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => { setErrMsg(''); setSigning(true); }}
+            style={{
+              ...label,
+              width: '100%',
+              marginTop: '16px',
+              minHeight: '72px',
+              borderRadius: '12px',
+              background: BRAND.gold,
+              color: BRAND.charcoal,
+              border: 'none',
+              fontSize: 'clamp(1rem, 1.5vw, 1.5rem)',
+              cursor: 'pointer',
+            }}
+          >
+            ✓ {es ? 'FIRMAR Y COMPLETAR' : 'SIGN OFF & COMPLETE'}
+          </button>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0, 0, 0, 0.72)',
+        zIndex: 900,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={() => setLastTouch(Date.now())}
+        style={{
+          width: 'min(940px, 94vw)',
+          maxHeight: '88vh',
+          overflowY: 'auto',
+          background: BRAND.charcoalDark,
+          border: `2px solid ${BRAND.gold}`,
+          borderRadius: '16px',
+          padding: 'clamp(18px, 3vw, 32px)',
+          boxSizing: 'border-box',
+        }}
+      >
+        {body}
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '20px' }}>
+          <button type="button" style={chip} onClick={onClose}>
+            {es ? 'CERRAR' : 'CLOSE'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Learn mode screen ───────────────────────────────────
 // Slow-period training surface. Three views in one component:
 //   session === null          → attract: auto-rotating walkthrough,
@@ -3034,7 +3561,7 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
 // nothing is ever written to build_steps (Notion sync owns those).
 const LEARN_IDLE_MS = 120_000;
 
-function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, configSides, headerProps }) {
+function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, configSides, headerProps, checklistNudge = null, checklistOverlay = null }) {
   const [session, setSession] = useState(null);
   const es = language === 'es';
 
@@ -3421,12 +3948,14 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
         @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
       `}</style>
       <Header {...headerProps} />
+      {checklistNudge}
+      {checklistOverlay}
       {body}
     </div>
   );
 }
 
-function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, learnAllowed = false, learnMode = false, onLearnToggle }) {
+function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, learnAllowed = false, learnMode = false, onLearnToggle, checklistAvailable = false, checklistDue = 0, onChecklistOpen }) {
   return (
     <div style={s.header}>
       <div style={s.headerLeft}>
@@ -3497,6 +4026,56 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, l
             }}
           >
             LEARN
+          </button>
+        )}
+        {checklistAvailable && onChecklistOpen && (
+          // Checklist chip. Reachable in every mode (not just slow
+          // periods) so a busy closing shift can still open the closing
+          // list. The red badge counts checklists that are due now and
+          // not yet signed.
+          <button
+            type="button"
+            onClick={onChecklistOpen}
+            aria-label={checklistDue > 0 ? `Open checklists (${checklistDue} due)` : 'Open checklists'}
+            title={checklistDue > 0 ? `${checklistDue} checklist${checklistDue === 1 ? '' : 's'} due now` : 'Checklists'}
+            style={{
+              position: 'relative',
+              padding: '8px 14px',
+              borderRadius: '999px',
+              background: 'transparent',
+              color: `${BRAND.gold}AA`,
+              border: `1px solid ${BRAND.gold}55`,
+              fontSize: '0.8rem',
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              letterSpacing: '2px',
+              cursor: 'pointer',
+              minHeight: '44px',
+              minWidth: '64px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {language === 'es' ? 'LISTAS' : 'LISTS'}
+            {checklistDue > 0 && (
+              <span style={{
+                position: 'absolute',
+                top: '-4px',
+                right: '-4px',
+                minWidth: '20px',
+                height: '20px',
+                borderRadius: '999px',
+                background: BRAND.red,
+                color: BRAND.white,
+                fontSize: '0.7rem',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '0 5px',
+              }}>{checklistDue}</span>
+            )}
           </button>
         )}
         {language && onLanguageToggle && (
