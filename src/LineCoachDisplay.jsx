@@ -633,6 +633,90 @@ export default function LineCoachDisplay({ storeId }) {
     <ChecklistNudge dueChecklists={dueChecklists} language={language} onOpen={openChecklists} />
   );
 
+  // ── Bird oven log ─────────────────────────────────────
+  // Chicken is the critical-path cook (30–35 min): every entree waits
+  // on it. Cooks log batches via the BIRDS overlay; state is derived
+  // client-side from timestamps + brand thresholds so countdowns tick
+  // locally between polls (30s idle / 10s with the log open).
+  const [birdData, setBirdData] = useState(null);
+  const [birdOverlayOpen, setBirdOverlayOpen] = useState(false);
+
+  const fetchBirds = useCallback(() => {
+    fetch(`/api/line-coach/bird-log?store=${storeId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.batches)) setBirdData(data);
+      })
+      .catch(() => { /* keep last good value */ });
+  }, [storeId]);
+
+  useEffect(() => {
+    fetchBirds();
+    const interval = setInterval(fetchBirds, birdOverlayOpen ? 10_000 : 30_000);
+    return () => clearInterval(interval);
+  }, [fetchBirds, birdOverlayOpen]);
+
+  const openBirdLog = useCallback(() => setBirdOverlayOpen(true), []);
+  const closeBirdLog = useCallback(() => setBirdOverlayOpen(false), []);
+
+  const birdAction = useCallback(async (payload) => {
+    let deviceId = null;
+    try { deviceId = window.localStorage.getItem(`lc-device-id-${storeId}`); } catch { /* ignore */ }
+    try {
+      await fetch('/api/line-coach/bird-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store_id: storeId, device_id: deviceId, ...payload }),
+      });
+    } catch { /* poll reconciles */ }
+    fetchBirds();
+  }, [storeId, fetchBirds]);
+
+  const birdCookMin = birdData?.cook_minutes ?? 32;
+  const birdWindowMin = birdData?.carve_window_minutes ?? 40;
+  const birdActive = (birdData?.batches || []).filter((b) => !b.resolved_at);
+  const birdCooking = birdActive.filter((b) => !b.pulled_at);
+  const birdHolding = birdActive.filter((b) => b.pulled_at);
+  const birdMinsSince = (iso) => (now.getTime() - new Date(iso).getTime()) / 60_000;
+  const birdPullDue = birdCooking.filter((b) => birdMinsSince(b.in_oven_at) >= birdCookMin);
+  const birdShredDue = birdHolding.filter((b) => birdMinsSince(b.pulled_at) >= birdWindowMin);
+  const birdAlertCount = birdPullDue.length + birdShredDue.length;
+
+  // Chime once per batch the moment it first hits PULL NOW — reuses
+  // the order-arrival chime; a forgotten batch is the most expensive
+  // miss on the line. Set-guarded so re-renders don't re-ring.
+  const birdChimedRef = useRef(new Set());
+  useEffect(() => {
+    for (const b of birdPullDue) {
+      if (!birdChimedRef.current.has(b.id)) {
+        birdChimedRef.current.add(b.id);
+        playChime();
+      }
+    }
+  });
+
+  const birdHeaderProps = {
+    birdAvailable: birdData != null,
+    birdCookingQty: birdCooking.reduce((sum, b) => sum + (b.qty || 0), 0),
+    birdHoldingQty: birdHolding.reduce((sum, b) => sum + (b.qty || 0), 0),
+    birdAlert: birdAlertCount,
+    onBirdOpen: openBirdLog,
+  };
+  const birdOverlay = birdOverlayOpen && birdData ? (
+    <BirdLogOverlay
+      batches={birdData.batches || []}
+      cookMin={birdCookMin}
+      windowMin={birdWindowMin}
+      now={now}
+      language={language}
+      onClose={closeBirdLog}
+      onAction={birdAction}
+    />
+  ) : null;
+  const birdBanner = (
+    <BirdAlertBanner pullDue={birdPullDue} shredDue={birdShredDue} language={language} onOpen={openBirdLog} />
+  );
+
   // Shift counter for Quality Coach mode (slow period only). Fetches
   // today's stats once when the kitchen goes quiet, then every 5 min
   // while it stays quiet. Pauses during active service so we don't
@@ -1520,9 +1604,10 @@ export default function LineCoachDisplay({ storeId }) {
           learnMode,
           onLearnToggle: toggleLearnMode,
           ...checklistHeaderProps,
+          ...birdHeaderProps,
         }}
-        checklistNudge={checklistNudge}
-        checklistOverlay={checklistOverlay}
+        checklistNudge={<>{birdBanner}{checklistNudge}</>}
+        checklistOverlay={<>{checklistOverlay}{birdOverlay}</>}
       />
     );
   }
@@ -1567,9 +1652,11 @@ export default function LineCoachDisplay({ storeId }) {
           @keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
           @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
         `}</style>
-        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} />
+        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} />
+        {birdBanner}
         {checklistNudge}
         {checklistOverlay}
+        {birdOverlay}
         <div style={s.qualityCoach}>
           <div style={{ ...s.qualityLabel, ...(isFeedbackTip ? { color: BRAND.terracotta } : {}) }}>{tipLabel}</div>
           <div style={s.qualityTipBlock} key={`${qualityTipIndex}-${language}`}>
@@ -1727,8 +1814,10 @@ export default function LineCoachDisplay({ storeId }) {
             to   { opacity: 1; transform: scale(1);    }
           }
         `}</style>
-        <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} />
+        <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} />
+        {birdBanner}
         {checklistOverlay}
+        {birdOverlay}
 
         <div
           {...focusOrderHandlers}
@@ -2134,8 +2223,10 @@ export default function LineCoachDisplay({ storeId }) {
           to   { opacity: 1; }
         }
       `}</style>
-      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} />
+      <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} />
+      {birdBanner}
       {checklistOverlay}
+      {birdOverlay}
       {bumpedToast && (
         <UndoToast orderNum={bumpedToast.orderNum} onUndo={handleUndo} />
       )}
@@ -3231,6 +3322,319 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
   );
 }
 
+// ── Bird oven log ───────────────────────────────────────
+// Banner + logging overlay for rotisserie bird batches. Facts come
+// from lc_bird_batches via the parent's poll; all timing state is
+// derived here from `now` so countdowns tick every second.
+
+// Attention banner: red pulsing when a batch hit cook time (pull it
+// before it dries out), gold when warmer batches are past the carve
+// window (shred, don't carve). Renders nothing when all is well.
+function BirdAlertBanner({ pullDue, shredDue, language, onOpen }) {
+  if (pullDue.length === 0 && shredDue.length === 0) return null;
+  const es = language === 'es';
+  const isPull = pullDue.length > 0;
+  const qty = (isPull ? pullDue : shredDue).reduce((sum, b) => sum + (b.qty || 0), 0);
+  const text = isPull
+    ? (es ? `SACA LOS POLLOS — ${qty} en el horno` : `PULL BIRDS NOW — ${qty} in the oven`)
+    : (es ? `PASÓ LA VENTANA — deshebra ${qty} pollos` : `PAST CARVE WINDOW — shred ${qty} birds`);
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 16px 0' }}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '12px',
+          padding: '12px 26px',
+          borderRadius: '999px',
+          background: isPull ? BRAND.red : `${BRAND.gold}22`,
+          border: `1px solid ${isPull ? BRAND.red : BRAND.gold}`,
+          color: isPull ? BRAND.white : BRAND.gold,
+          fontFamily: "'Oswald', sans-serif",
+          fontWeight: 700,
+          fontSize: 'clamp(0.95rem, 1.4vw, 1.4rem)',
+          letterSpacing: '2px',
+          textTransform: 'uppercase',
+          cursor: 'pointer',
+          minHeight: '44px',
+          animation: isPull ? 'lcAllergyPulse 1.4s ease-in-out infinite' : 'none',
+        }}
+      >
+        <span>🍗</span>
+        <span>{text}</span>
+        <span style={{ opacity: 0.7 }}>{es ? 'TOCA' : 'TAP'}</span>
+      </button>
+    </div>
+  );
+}
+
+// Full-screen bird log. Three zones: IN THE OVEN (countdown → PULLED
+// button), IN THE WARMER (carve-window state → DONE / SHRED), and the
+// big + row for logging a new batch. 3-min idle timeout like the
+// checklist overlay; ✕ on a row deletes a mis-logged batch.
+const BIRD_IDLE_MS = 180_000;
+const BIRD_QTY_OPTIONS = [1, 2, 4, 6, 8];
+
+function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, onAction }) {
+  const es = language === 'es';
+  const [lastTouch, setLastTouch] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setTimeout(onClose, BIRD_IDLE_MS);
+    return () => clearTimeout(t);
+  }, [lastTouch, onClose]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const active = batches.filter((b) => !b.resolved_at);
+  const cooking = active.filter((b) => !b.pulled_at);
+  const holding = active.filter((b) => b.pulled_at);
+  const secsSince = (iso) => Math.floor((now.getTime() - new Date(iso).getTime()) / 1000);
+  const fmtClock = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const fmtMmSs = (totalSecs) => {
+    const s = Math.max(0, totalSecs);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  // Kiosks run in LA local time, so a plain same-day check is enough
+  // for the shift counter.
+  const isToday = (iso) => new Date(iso).toDateString() === now.toDateString();
+  const inToday = batches.filter((b) => isToday(b.in_oven_at)).reduce((sum, b) => sum + (b.qty || 0), 0);
+  const shreddedToday = batches
+    .filter((b) => b.resolution === 'shredded' && b.resolved_at && isToday(b.resolved_at))
+    .reduce((sum, b) => sum + (b.qty || 0), 0);
+
+  const label = {
+    fontFamily: "'Oswald', sans-serif",
+    fontWeight: 700,
+    letterSpacing: '2px',
+    textTransform: 'uppercase',
+  };
+  const chip = {
+    ...label,
+    padding: '10px 20px',
+    borderRadius: '999px',
+    background: 'transparent',
+    color: `${BRAND.gold}CC`,
+    border: `1px solid ${BRAND.gold}55`,
+    fontSize: 'clamp(0.8rem, 1.1vw, 1.1rem)',
+    cursor: 'pointer',
+    minHeight: '44px',
+    minWidth: '64px',
+  };
+  const rowStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px',
+    padding: '14px 18px',
+    minHeight: '64px',
+    borderRadius: '12px',
+    background: BRAND.charcoalLight,
+  };
+  const sectionLabel = {
+    ...label,
+    color: BRAND.gold,
+    fontSize: 'clamp(0.9rem, 1.2vw, 1.2rem)',
+    margin: '18px 0 10px',
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0, 0, 0, 0.72)',
+        zIndex: 900,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={() => setLastTouch(Date.now())}
+        style={{
+          width: 'min(940px, 94vw)',
+          maxHeight: '88vh',
+          overflowY: 'auto',
+          background: BRAND.charcoalDark,
+          border: `2px solid ${BRAND.gold}`,
+          borderRadius: '16px',
+          padding: 'clamp(18px, 3vw, 32px)',
+          boxSizing: 'border-box',
+        }}
+      >
+        {/* Self-contained keyframes — this overlay renders over every
+            branch, and not every branch's style tag defines these. */}
+        <style>{`
+          @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+        `}</style>
+        <div style={{ ...label, color: BRAND.gold, fontSize: 'clamp(1rem, 1.5vw, 1.5rem)', textAlign: 'center' }}>
+          🍗 {es ? 'REGISTRO DE POLLOS' : 'BIRD LOG'}
+        </div>
+
+        <div style={sectionLabel}>{es ? 'EN EL HORNO' : 'IN THE OVEN'}</div>
+        {cooking.length === 0 && (
+          <div style={{ color: `${BRAND.cream}70`, fontFamily: "'Oswald', sans-serif", letterSpacing: '1px' }}>
+            {es ? 'Nada en el horno' : 'Nothing in the oven'}
+          </div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {cooking.map((b) => {
+            const remaining = cookMin * 60 - secsSince(b.in_oven_at);
+            const overMin = Math.floor(-remaining / 60);
+            return (
+              <div key={b.id} style={{ ...rowStyle, border: `1px solid ${remaining <= 0 ? BRAND.red : `${BRAND.cream}25`}` }}>
+                <span style={{ ...label, color: BRAND.bone, fontSize: 'clamp(1rem, 1.4vw, 1.4rem)', flexShrink: 0 }}>
+                  {b.qty} 🍗
+                </span>
+                <span style={{ color: `${BRAND.cream}90`, fontFamily: "'Oswald', sans-serif", fontSize: 'clamp(0.85rem, 1.1vw, 1.1rem)', flexShrink: 0 }}>
+                  {es ? 'ENTRÓ' : 'IN'} {fmtClock(b.in_oven_at)}
+                </span>
+                <span style={{
+                  ...label,
+                  flex: 1,
+                  textAlign: 'center',
+                  fontVariantNumeric: 'tabular-nums',
+                  fontSize: 'clamp(1rem, 1.5vw, 1.5rem)',
+                  color: remaining <= 0 ? BRAND.red : BRAND.cream,
+                  ...(remaining <= 0 ? { animation: 'lcLearnPulse 1.2s ease-in-out infinite' } : {}),
+                }}>
+                  {remaining > 0
+                    ? `${es ? 'LISTO EN' : 'READY IN'} ${fmtMmSs(remaining)}`
+                    : `${es ? 'SÁCALO YA' : 'PULL NOW'}${overMin > 0 ? ` · +${overMin} MIN` : ''}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onAction({ action: 'pulled', batch_id: b.id })}
+                  style={{
+                    ...chip,
+                    background: BRAND.gold,
+                    color: BRAND.charcoal,
+                    border: 'none',
+                    minHeight: '56px',
+                    padding: '10px 26px',
+                  }}
+                >
+                  {es ? 'AFUERA →' : 'PULLED →'}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Remove mis-logged batch"
+                  onClick={() => onAction({ action: 'undo', batch_id: b.id })}
+                  style={{ ...chip, minWidth: '48px', padding: '10px 12px' }}
+                >✕</button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={sectionLabel}>{es ? 'EN EL CALENTADOR' : 'IN THE WARMER'}</div>
+        {holding.length === 0 && (
+          <div style={{ color: `${BRAND.cream}70`, fontFamily: "'Oswald', sans-serif", letterSpacing: '1px' }}>
+            {es ? 'Nada en el calentador' : 'Nothing in the warmer'}
+          </div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {holding.map((b) => {
+            const heldMin = Math.floor(secsSince(b.pulled_at) / 60);
+            const leftMin = windowMin - heldMin;
+            const state = leftMin <= 0 ? 'shred' : leftMin <= 10 ? 'useFirst' : 'ok';
+            const stateColor = state === 'shred' ? BRAND.red : state === 'useFirst' ? BRAND.gold : BRAND.green;
+            const stateText = state === 'shred'
+              ? `${es ? 'DESHEBRA' : 'SHRED'} · ${-leftMin} MIN ${es ? 'PASADO' : 'PAST'}`
+              : state === 'useFirst'
+                ? `${es ? 'USA PRIMERO' : 'USE FIRST'} · ${leftMin} MIN`
+                : `${es ? 'VENTANA' : 'CARVE'} ${leftMin} MIN`;
+            return (
+              <div key={b.id} style={{ ...rowStyle, border: `1px solid ${state === 'shred' ? BRAND.red : `${BRAND.cream}25`}` }}>
+                <span style={{ ...label, color: BRAND.bone, fontSize: 'clamp(1rem, 1.4vw, 1.4rem)', flexShrink: 0 }}>
+                  {b.qty} 🍗
+                </span>
+                <span style={{ color: `${BRAND.cream}90`, fontFamily: "'Oswald', sans-serif", fontSize: 'clamp(0.85rem, 1.1vw, 1.1rem)', flexShrink: 0 }}>
+                  {es ? 'SALIÓ' : 'PULLED'} {fmtClock(b.pulled_at)}
+                </span>
+                <span style={{
+                  ...label,
+                  flex: 1,
+                  textAlign: 'center',
+                  fontSize: 'clamp(1rem, 1.5vw, 1.5rem)',
+                  color: stateColor,
+                }}>{stateText}</span>
+                <button
+                  type="button"
+                  onClick={() => onAction({ action: 'resolve', batch_id: b.id, resolution: 'used' })}
+                  style={{ ...chip, minHeight: '56px' }}
+                >
+                  {es ? 'SE USÓ' : 'DONE'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAction({ action: 'resolve', batch_id: b.id, resolution: 'shredded' })}
+                  style={{
+                    ...chip,
+                    minHeight: '56px',
+                    ...(state === 'shred' ? { background: BRAND.gold, color: BRAND.charcoal, border: 'none' } : {}),
+                  }}
+                >
+                  {es ? 'DESHEBRAR' : 'SHRED'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={sectionLabel}>{es ? '+ POLLOS AL HORNO' : '+ BIRDS IN THE OVEN'}</div>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          {BIRD_QTY_OPTIONS.map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => onAction({ action: 'in', qty: n })}
+              style={{
+                ...label,
+                flex: 1,
+                minWidth: '90px',
+                minHeight: '72px',
+                borderRadius: '12px',
+                background: BRAND.charcoalLight,
+                border: `1px solid ${BRAND.gold}40`,
+                color: BRAND.bone,
+                fontSize: 'clamp(1.2rem, 1.8vw, 1.8rem)',
+                cursor: 'pointer',
+              }}
+            >+{n}</button>
+          ))}
+        </div>
+
+        <div style={{
+          marginTop: '18px',
+          textAlign: 'center',
+          color: `${BRAND.cream}80`,
+          fontFamily: "'Oswald', sans-serif",
+          letterSpacing: '2px',
+          textTransform: 'uppercase',
+          fontSize: 'clamp(0.8rem, 1vw, 1rem)',
+        }}>
+          {es ? 'Hoy' : 'Today'}: {inToday} {es ? 'al horno' : 'in'} · {shreddedToday} {es ? 'deshebrados' : 'shredded'}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '16px' }}>
+          <button type="button" style={chip} onClick={onClose}>
+            {es ? 'CERRAR' : 'CLOSE'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Checklists ──────────────────────────────────────────
 // Slow-period nudge banner + the full checklist overlay. Templates
 // and completion state come from the parent's checklist-runs poll;
@@ -4065,7 +4469,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
   );
 }
 
-function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, learnAllowed = false, learnMode = false, onLearnToggle, checklistAvailable = false, checklistDue = 0, onChecklistOpen }) {
+function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, learnAllowed = false, learnMode = false, onLearnToggle, checklistAvailable = false, checklistDue = 0, onChecklistOpen, birdAvailable = false, birdCookingQty = 0, birdHoldingQty = 0, birdAlert = 0, onBirdOpen }) {
   return (
     <div style={s.header}>
       <div style={s.headerLeft}>
@@ -4136,6 +4540,58 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, l
             }}
           >
             LEARN
+          </button>
+        )}
+        {birdAvailable && onBirdOpen && (
+          // Bird oven log chip. Shows cooking · warmer counts at a
+          // glance; the red badge counts batches needing action (pull
+          // due / past carve window). Rendered before LISTS because
+          // birds are the critical-path item.
+          <button
+            type="button"
+            onClick={onBirdOpen}
+            aria-label={birdAlert > 0 ? `Open bird log (${birdAlert} batches need action)` : 'Open bird log'}
+            title={`Birds — ${birdCookingQty} cooking · ${birdHoldingQty} in warmer`}
+            style={{
+              position: 'relative',
+              padding: '8px 14px',
+              borderRadius: '999px',
+              background: 'transparent',
+              color: `${BRAND.gold}AA`,
+              border: `1px solid ${BRAND.gold}55`,
+              fontSize: '0.8rem',
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              letterSpacing: '2px',
+              cursor: 'pointer',
+              minHeight: '44px',
+              minWidth: '64px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>🍗</span>
+            <span>{(birdCookingQty > 0 || birdHoldingQty > 0) ? `${birdCookingQty} · ${birdHoldingQty}` : (language === 'es' ? 'POLLOS' : 'BIRDS')}</span>
+            {birdAlert > 0 && (
+              <span style={{
+                position: 'absolute',
+                top: '-4px',
+                right: '-4px',
+                minWidth: '20px',
+                height: '20px',
+                borderRadius: '999px',
+                background: BRAND.red,
+                color: BRAND.white,
+                fontSize: '0.7rem',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '0 5px',
+              }}>{birdAlert}</span>
+            )}
           </button>
         )}
         {checklistAvailable && onChecklistOpen && (

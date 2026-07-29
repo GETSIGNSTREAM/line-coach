@@ -1914,9 +1914,13 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
       max_ticket_minutes: 12,
       sla_target_minutes: 8,
       sla_breach_minutes: 10,
+      bird_cook_minutes: 32,
+      bird_carve_window_minutes: 40,
       ...(config.hold_times || {}),
     };
     const HELP = {
+      bird_cook_minutes: 'bird oven log — batch countdown; PULL NOW alert after this many minutes in the oven',
+      bird_carve_window_minutes: 'bird oven log — minutes in the warmer before a batch is flagged SHRED (Culinary OS locked: 40)',
       fire_now: 'minutes before fire time — moves to FIRE NOW lane',
       staging: 'minutes before fire time — moves to STAGING lane',
       on_deck: 'minutes before fire time — moves to ON DECK lane',
