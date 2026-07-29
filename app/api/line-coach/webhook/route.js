@@ -454,6 +454,11 @@ export async function POST(request) {
         name: titleCase(cleanName),
         quantity: item.quantity || 1,
         modifiers: extracted.modifiers,
+        // This entree's own sides, kept on the item so the display can
+        // pair "w/ ..." directly beneath its parent entree. order.sides
+        // still carries the flattened set for batching — this is a
+        // display convenience, not a second source of truth.
+        sides: extracted.sides.map(({ name, quantity, size }) => ({ name, quantity, size })),
       });
     }
 
