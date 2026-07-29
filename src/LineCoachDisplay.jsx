@@ -648,9 +648,12 @@ export default function LineCoachDisplay({ storeId }) {
         .then(setConfig)
         .catch(console.error);
     fetchConfig();
-    // Kiosks run unattended for days — re-poll hourly so daily-generated
+    // Kiosks run unattended for days — re-poll so daily-generated
     // feedback tips and admin config edits land without a reload.
-    const interval = setInterval(fetchConfig, 60 * 60_000);
+    // 15 min (was 60): learn_mode_enabled and menu/build-step edits
+    // shouldn't take an hour to reach a wall display. Checklist
+    // content doesn't ride this poll at all (checklist-runs endpoint).
+    const interval = setInterval(fetchConfig, 15 * 60_000);
     return () => clearInterval(interval);
   }, [storeId]);
 

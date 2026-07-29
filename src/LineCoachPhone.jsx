@@ -246,13 +246,27 @@ function StoreRow({ row, onPick }) {
           <span style={{ ...s.statValue, color }}>{fmtSec(row.p90_seconds)}</span>
         </div>
       </div>
-      {(overSlaWarn || anomalyCount > 0) && (
+      {(overSlaWarn || anomalyCount > 0 || row.checklist_summary) && (
         <div style={s.storeRowFlags}>
           {overSlaWarn && (
             <span style={s.flagPill}>⚠️ {row.over_sla_pct.toFixed(1)}% over SLA</span>
           )}
           {anomalyCount > 0 && (
             <span style={s.flagPill}>⚠️ {anomalyCount} demand anomal{anomalyCount === 1 ? 'y' : 'ies'}</span>
+          )}
+          {row.checklist_summary && (
+            // Green once every checklist is signed; amber while any
+            // scheduled one is due and unsigned; neutral otherwise
+            // (e.g. closing list before the window opens).
+            <span style={{
+              ...s.flagPill,
+              color: row.checklist_summary.completed >= row.checklist_summary.total
+                ? BRAND.green
+                : row.checklist_summary.due_unsigned > 0 ? BRAND.yellow : BRAND.cream,
+            }}>
+              {row.checklist_summary.completed >= row.checklist_summary.total ? '✅' : '☑️'}{' '}
+              {row.checklist_summary.completed}/{row.checklist_summary.total} checklists
+            </span>
           )}
         </div>
       )}
@@ -301,6 +315,40 @@ function StoreView({ data, onBack, language, onLanguageToggle }) {
           )}
         </div>
       </div>
+
+      {Array.isArray(data.checklists) && data.checklists.length > 0 && (
+        <div style={s.section}>
+          <div style={s.sectionLabel}>Checklists</div>
+          <div style={s.topList}>
+            {data.checklists.map((cl) => {
+              const name = cl.name?.en || cl.name?.es || 'Checklist';
+              const signed = !!cl.completed_at;
+              const signedTime = signed
+                ? new Date(cl.completed_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                : null;
+              const status = signed
+                ? `✓ ${cl.completed_by} · ${signedTime}`
+                : cl.items_checked > 0
+                  ? `${cl.items_checked}/${cl.items_total}`
+                  : 'not started';
+              const statusColor = signed
+                ? BRAND.green
+                : cl.due_now ? BRAND.yellow : `${BRAND.cream}80`;
+              return (
+                <div key={cl.id} style={s.topRow}>
+                  <span>
+                    {name}
+                    {cl.due_now && !signed && (
+                      <span style={{ color: BRAND.yellow, marginLeft: '8px', fontSize: '0.75rem' }}>DUE</span>
+                    )}
+                  </span>
+                  <span style={{ ...s.topCount, color: statusColor }}>{status}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {trail.length > 0 && (
         <div style={s.section}>
