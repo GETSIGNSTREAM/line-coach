@@ -316,6 +316,40 @@ function StoreView({ data, onBack, language, onLanguageToggle }) {
         </div>
       </div>
 
+      {data.birds && (
+        <div style={s.section}>
+          <div style={s.sectionLabel}>
+            🍗 Birds
+            {(data.birds.pull_due_qty > 0 || data.birds.shred_due_qty > 0) && (
+              <span style={{ color: BRAND.red, marginLeft: '8px' }}>
+                {data.birds.pull_due_qty > 0 ? `${data.birds.pull_due_qty} PULL DUE` : ''}
+                {data.birds.pull_due_qty > 0 && data.birds.shred_due_qty > 0 ? ' · ' : ''}
+                {data.birds.shred_due_qty > 0 ? `${data.birds.shred_due_qty} SHRED` : ''}
+              </span>
+            )}
+          </div>
+          <div style={s.todayGrid}>
+            <Stat
+              label="Cooking"
+              value={data.birds.next_ready_minutes != null
+                ? `${data.birds.cooking_qty} (next ~${data.birds.next_ready_minutes}m)`
+                : data.birds.cooking_qty}
+              color={data.birds.pull_due_qty > 0 ? BRAND.red : BRAND.cream}
+            />
+            <Stat
+              label="In warmer"
+              value={data.birds.oldest_hold_minutes != null
+                ? `${data.birds.holding_qty} (oldest ${data.birds.oldest_hold_minutes}m)`
+                : data.birds.holding_qty}
+              color={data.birds.shred_due_qty > 0 ? BRAND.red : BRAND.cream}
+            />
+            {data.birds.shredded_today_qty > 0 && (
+              <Stat label="Shredded today" value={data.birds.shredded_today_qty} color={`${BRAND.cream}80`} />
+            )}
+          </div>
+        </div>
+      )}
+
       {Array.isArray(data.checklists) && data.checklists.length > 0 && (
         <div style={s.section}>
           <div style={s.sectionLabel}>Checklists</div>

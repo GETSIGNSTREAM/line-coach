@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { buildDailyRecap, getTicketTimePercentiles, getActiveOrders, getConfig, resolveStoreId, getChecklistRuns } from '@/lib/line-coach';
+import { buildDailyRecap, getTicketTimePercentiles, getActiveOrders, getConfig, resolveStoreId, getChecklistRuns, getBirdBatches } from '@/lib/line-coach';
 import { requirePhone } from '@/lib/auth';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
@@ -69,6 +69,36 @@ async function checklistsForStore(storeId) {
   }
 }
 
+// Bird oven log, phone-shaped. Null on any hiccup — the SLA dashboard
+// never breaks because the bird log stumbled.
+async function birdSummaryForStore(storeId, cookMin, windowMin) {
+  try {
+    const { data: batches, error } = await getBirdBatches(storeId);
+    if (error || !batches) return null;
+    const nowMs = Date.now();
+    const mins = (iso) => (nowMs - new Date(iso).getTime()) / 60_000;
+    const active = batches.filter((b) => !b.resolved_at);
+    const cooking = active.filter((b) => !b.pulled_at);
+    const holding = active.filter((b) => b.pulled_at);
+    const qtySum = (rows) => rows.reduce((sum, b) => sum + (b.qty || 0), 0);
+    return {
+      cooking_qty: qtySum(cooking),
+      next_ready_minutes: cooking.length
+        ? Math.max(0, Math.ceil(Math.min(...cooking.map((b) => cookMin - mins(b.in_oven_at)))))
+        : null,
+      pull_due_qty: qtySum(cooking.filter((b) => mins(b.in_oven_at) >= cookMin)),
+      holding_qty: qtySum(holding),
+      oldest_hold_minutes: holding.length
+        ? Math.floor(Math.max(...holding.map((b) => mins(b.pulled_at))))
+        : null,
+      shred_due_qty: qtySum(holding.filter((b) => mins(b.pulled_at) >= windowMin)),
+      shredded_today_qty: qtySum(batches.filter((b) => b.resolution === 'shredded')),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function checklistSummary(rows) {
   if (!rows || rows.length === 0) return null;
   return {
@@ -92,11 +122,15 @@ export async function GET(request) {
   let slaTargetMin = 8;
   let slaBreachMin = 10;
   let cleanupCutoffMinutes = 12;
+  let birdCookMin = 32;
+  let birdWindowMin = 40;
   try {
     const { data: cfg } = await getConfig(resolveStoreId('default'));
     slaTargetMin = cfg?.hold_times?.sla_target_minutes ?? 8;
     slaBreachMin = cfg?.hold_times?.sla_breach_minutes ?? 10;
     cleanupCutoffMinutes = cfg?.hold_times?.max_ticket_minutes ?? 12;
+    birdCookMin = cfg?.hold_times?.bird_cook_minutes ?? 32;
+    birdWindowMin = cfg?.hold_times?.bird_carve_window_minutes ?? 40;
   } catch { /* fall back to defaults */ }
 
   const slaTargetSec = slaTargetMin * 60;
@@ -110,11 +144,12 @@ export async function GET(request) {
     if (!STORES.includes(storeParam)) {
       return NextResponse.json({ error: 'unknown store' }, { status: 400 });
     }
-    const [todayRes, trail, activeRes, checklistRows] = await Promise.all([
+    const [todayRes, trail, activeRes, checklistRows, birds] = await Promise.all([
       buildDailyRecap({ storeId: storeParam, slaBreachMin, cleanupCutoffMinutes, daysAgo: 0 }),
       getTicketTimePercentiles({ storeId: storeParam, days: 7, cleanupCutoffMinutes }),
       getActiveOrders(storeParam),
       checklistsForStore(storeParam),
+      birdSummaryForStore(storeParam, birdCookMin, birdWindowMin),
     ]);
 
     const today = todayRes.data || null;
@@ -142,6 +177,7 @@ export async function GET(request) {
       trailing_7d: trail.data || [],
       active_now: activeFresh.length,
       checklists: checklistRows || [],
+      birds,
       // Severity for the badge / glow on the drill-in header.
       breach_severity: severityFor(today?.p90_seconds, slaTargetSec, slaBreachSec),
       ran_at: new Date().toISOString(),
