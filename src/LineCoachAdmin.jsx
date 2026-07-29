@@ -1218,6 +1218,12 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           setConfig(await cfgRes.json());
           setDirty(false);
         }
+      } else if (res.status === 401) {
+        // Same treatment as handleSave: token expired (24h) or
+        // JWT_SECRET rotated — bounce to login instead of showing a
+        // dead-end "Unauthorized" next to the button.
+        setSyncMsg('Session expired — please log in again.');
+        logout();
       } else {
         setSyncMsg(`Error: ${json.error || res.status}`);
       }
@@ -1243,6 +1249,9 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
         setRegenMsg(`Not enough recent reviews (${json.reviewCount ?? 0}) — tips cleared`);
       } else if (res.ok && json.status === 'disabled') {
         setRegenMsg('Feedback tips are disabled for this store (Settings tab)');
+      } else if (res.status === 401) {
+        setRegenMsg('Session expired — please log in again.');
+        logout();
       } else {
         setRegenMsg(`Error: ${json.error || res.status}`);
       }
