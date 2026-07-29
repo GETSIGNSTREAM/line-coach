@@ -1361,11 +1361,12 @@ export default function LineCoachDisplay({ storeId }) {
 
 
   // ── Learn mode walkthroughs (slow period) ───────────
-  // While LEARN is on, quiet periods become a training session: the
-  // rotation cycles through every entree that has build steps —
-  // photo, name, numbered steps — replacing the tips rotation (a
-  // trainee shouldn't wait 30s between relevant cards). Rides the
-  // existing qualityTipIndex / quality_coach_interval cadence. Zero
+  // While LEARN is on, quiet periods become a training session. The
+  // attract rotation rides qualityTipIndex as before; tapping hands
+  // control to the trainee (dish picker → paced step-through) inside
+  // LearnModeScreen. Session state lives in that child, so when
+  // orders arrive and this branch stops rendering, the half-finished
+  // session is discarded automatically — service always wins. Zero
   // items with steps → falls through to the normal tips branch.
 
   const learnItems = learnModeOn
@@ -1375,89 +1376,24 @@ export default function LineCoachDisplay({ storeId }) {
     : [];
 
   if (isSlowPeriod && learnItems.length > 0) {
-    const learnItem = learnItems[qualityTipIndex % learnItems.length];
-    const manySteps = learnItem.steps.length > 6;
     return (
-      <div style={s.container}>
-        <style>{`@keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-        <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} />
-        <div style={s.qualityCoach}>
-          <div style={{ ...s.qualityLabel, color: BRAND.blue }}>
-            {language === 'es' ? 'MODO APRENDIZAJE' : 'LEARN MODE'}
-          </div>
-          <div key={`learn-${qualityTipIndex}-${language}`} style={{
-            display: 'flex',
-            gap: 'clamp(24px, 4vw, 64px)',
-            alignItems: 'flex-start',
-            justifyContent: 'center',
-            maxWidth: '90vw',
-            marginTop: '3vh',
-            animation: 'lcQualityFade 400ms ease-out',
-          }}>
-            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh' }}>
-              <FoodPhoto
-                src={getSideImageUrl(learnItem.name, menuItems, configSides)}
-                alt={learnItem.name}
-                style={{ width: '28vh', height: '28vh', borderRadius: '14px' }}
-              />
-              <div style={{
-                fontFamily: "'Oswald', sans-serif",
-                fontWeight: 700,
-                fontSize: 'clamp(1.2rem, 2vw, 2rem)',
-                color: BRAND.bone,
-                letterSpacing: '2px',
-                textTransform: 'uppercase',
-                textAlign: 'center',
-                maxWidth: '30vh',
-              }}>{learnItem.name}</div>
-            </div>
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: manySteps ? '10px' : '16px',
-              maxHeight: '62vh',
-              overflowY: 'auto',
-              minWidth: 0,
-            }}>
-              {learnItem.steps.map((step, si) => {
-                const stepText = pickTipText(step, language);
-                if (!stepText) return null;
-                return (
-                  <div key={si} style={{ display: 'flex', gap: '16px', alignItems: 'baseline', textAlign: 'left' }}>
-                    <span style={{
-                      flexShrink: 0,
-                      minWidth: '1.8em',
-                      color: BRAND.blue,
-                      fontFamily: "'Oswald', sans-serif",
-                      fontWeight: 700,
-                      fontSize: manySteps ? 'clamp(1.1rem, 1.6vw, 1.6rem)' : 'clamp(1.3rem, 2vw, 2rem)',
-                    }}>{si + 1}.</span>
-                    <span style={{
-                      fontSize: manySteps ? 'clamp(1.1rem, 1.7vw, 1.7rem)' : 'clamp(1.3rem, 2.1vw, 2.1rem)',
-                      color: language === 'en' ? BRAND.bone : BRAND.cream,
-                      fontFamily: "'Playfair Display', Georgia, serif",
-                      lineHeight: 1.35,
-                      fontStyle: language === 'es' ? 'italic' : 'normal',
-                    }}>{stepText}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          {learnItems.length > 1 && (
-            <div style={{
-              marginTop: '3vh',
-              color: `${BRAND.cream}80`,
-              fontFamily: "'Oswald', sans-serif",
-              fontSize: 'clamp(0.8rem, 1vw, 1rem)',
-              letterSpacing: '2px',
-              textTransform: 'uppercase',
-            }}>
-              {(qualityTipIndex % learnItems.length) + 1} / {learnItems.length}
-            </div>
-          )}
-        </div>
-      </div>
+      <LearnModeScreen
+        learnItems={learnItems}
+        rotationIndex={qualityTipIndex}
+        language={language}
+        menuItems={menuItems}
+        configSides={configSides}
+        headerProps={{
+          now,
+          orderCount: 0,
+          staleCount,
+          language,
+          onLanguageToggle: toggleLanguage,
+          learnAllowed: learnModeAllowed,
+          learnMode,
+          onLearnToggle: toggleLearnMode,
+        }}
+      />
     );
   }
 
@@ -3079,6 +3015,413 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
           Tap outside to close · Hold a card to bump
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Learn mode screen ───────────────────────────────────
+// Slow-period training surface. Three views in one component:
+//   session === null          → attract: auto-rotating walkthrough,
+//                               riding the parent's qualityTipIndex
+//   session.view === 'picker' → tap-to-practice dish grid
+//   session.view === 'steps'  → trainee-paced step-through, one step
+//                               per screen, ✓-and-advance
+// Session state is deliberately local: the parent stops rendering
+// this branch the moment orders arrive, the component unmounts, and
+// the half-finished session evaporates — service always wins. A
+// 2-minute idle timeout falls back to attract the same way. Progress
+// is anonymous and in-memory only (v1 — no trainee records), and
+// nothing is ever written to build_steps (Notion sync owns those).
+const LEARN_IDLE_MS = 120_000;
+
+function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, configSides, headerProps }) {
+  const [session, setSession] = useState(null);
+  const es = language === 'es';
+
+  // Idle fallback. Every tap replaces `session` with a fresh object,
+  // so keying the timeout on it restarts the 2-min clock on activity.
+  useEffect(() => {
+    if (!session) return undefined;
+    const t = setTimeout(() => setSession(null), LEARN_IDLE_MS);
+    return () => clearTimeout(t);
+  }, [session]);
+
+  // A config repoll mid-session can drop the practiced item (menu
+  // edit, Notion sync). Fall back to the picker instead of crashing.
+  const activeItem = session?.view === 'steps'
+    ? learnItems.find((m) => m.name === session.itemName)
+    : null;
+  const view = session?.view === 'steps'
+    ? (activeItem ? 'steps' : 'picker')
+    : (session?.view === 'picker' ? 'picker' : 'attract');
+
+  const chipBtn = {
+    padding: '10px 20px',
+    borderRadius: '999px',
+    background: 'transparent',
+    color: `${BRAND.gold}CC`,
+    border: `1px solid ${BRAND.gold}55`,
+    fontSize: 'clamp(0.8rem, 1.1vw, 1.1rem)',
+    fontFamily: "'Oswald', sans-serif",
+    fontWeight: 700,
+    letterSpacing: '2px',
+    textTransform: 'uppercase',
+    cursor: 'pointer',
+    minHeight: '44px',
+    minWidth: '64px',
+  };
+
+  let body = null;
+
+  if (view === 'attract') {
+    const learnItem = learnItems[rotationIndex % learnItems.length];
+    const manySteps = learnItem.steps.length > 6;
+    body = (
+      // Whole surface is the tap target — a trainee shouldn't have to
+      // find a small button from across the line. Plain onClick, never
+      // the hold-to-bump pointer machine (that's for order cards).
+      <div style={{ ...s.qualityCoach, cursor: 'pointer' }} onClick={() => setSession({ view: 'picker' })}>
+        <div style={{ ...s.qualityLabel, color: BRAND.blue }}>
+          {es ? 'MODO APRENDIZAJE' : 'LEARN MODE'}
+        </div>
+        <div key={`learn-${rotationIndex}-${language}`} style={{
+          display: 'flex',
+          gap: 'clamp(24px, 4vw, 64px)',
+          alignItems: 'flex-start',
+          justifyContent: 'center',
+          maxWidth: '90vw',
+          marginTop: '3vh',
+          animation: 'lcQualityFade 400ms ease-out',
+        }}>
+          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh' }}>
+            <FoodPhoto
+              src={getSideImageUrl(learnItem.name, menuItems, configSides)}
+              alt={learnItem.name}
+              style={{ width: '28vh', height: '28vh', borderRadius: '14px' }}
+            />
+            <div style={{
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              fontSize: 'clamp(1.2rem, 2vw, 2rem)',
+              color: BRAND.bone,
+              letterSpacing: '2px',
+              textTransform: 'uppercase',
+              textAlign: 'center',
+              maxWidth: '30vh',
+            }}>{learnItem.name}</div>
+          </div>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: manySteps ? '10px' : '16px',
+            maxHeight: '56vh',
+            overflowY: 'auto',
+            minWidth: 0,
+          }}>
+            {learnItem.steps.map((step, si) => {
+              const stepText = pickTipText(step, language);
+              if (!stepText) return null;
+              return (
+                <div key={si} style={{ display: 'flex', gap: '16px', alignItems: 'baseline', textAlign: 'left' }}>
+                  <span style={{
+                    flexShrink: 0,
+                    minWidth: '1.8em',
+                    color: BRAND.blue,
+                    fontFamily: "'Oswald', sans-serif",
+                    fontWeight: 700,
+                    fontSize: manySteps ? 'clamp(1.1rem, 1.6vw, 1.6rem)' : 'clamp(1.3rem, 2vw, 2rem)',
+                  }}>{si + 1}.</span>
+                  <span style={{
+                    fontSize: manySteps ? 'clamp(1.1rem, 1.7vw, 1.7rem)' : 'clamp(1.3rem, 2.1vw, 2.1rem)',
+                    color: language === 'en' ? BRAND.bone : BRAND.cream,
+                    fontFamily: "'Playfair Display', Georgia, serif",
+                    lineHeight: 1.35,
+                    fontStyle: es ? 'italic' : 'normal',
+                  }}>{stepText}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{
+          marginTop: '3vh',
+          padding: '12px 28px',
+          borderRadius: '999px',
+          border: `1px solid ${BRAND.gold}66`,
+          color: BRAND.gold,
+          fontFamily: "'Oswald', sans-serif",
+          fontWeight: 700,
+          letterSpacing: '3px',
+          fontSize: 'clamp(0.9rem, 1.3vw, 1.3rem)',
+          textTransform: 'uppercase',
+          animation: 'lcLearnPulse 2.4s ease-in-out infinite',
+        }}>
+          {es ? 'TOCA PARA PRACTICAR' : 'TAP TO PRACTICE'}
+        </div>
+        {learnItems.length > 1 && (
+          <div style={{
+            marginTop: '2vh',
+            color: `${BRAND.cream}80`,
+            fontFamily: "'Oswald', sans-serif",
+            fontSize: 'clamp(0.8rem, 1vw, 1rem)',
+            letterSpacing: '2px',
+            textTransform: 'uppercase',
+          }}>
+            {(rotationIndex % learnItems.length) + 1} / {learnItems.length}
+          </div>
+        )}
+      </div>
+    );
+  } else if (view === 'picker') {
+    body = (
+      <div style={s.qualityCoach}>
+        <div style={{ ...s.qualityLabel, color: BRAND.blue }}>
+          {es ? 'ELIGE UN PLATILLO PARA PRACTICAR' : 'CHOOSE A DISH TO PRACTICE'}
+        </div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+          gap: '20px',
+          width: 'min(90vw, 1400px)',
+          maxHeight: '68vh',
+          overflowY: 'auto',
+          animation: 'lcQualityFade 400ms ease-out',
+        }}>
+          {learnItems.map((item) => (
+            <button
+              key={item.name}
+              type="button"
+              onClick={() => setSession({ view: 'steps', itemName: item.name, stepIndex: 0, checked: [] })}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '18px',
+                borderRadius: '14px',
+                background: BRAND.charcoalLight,
+                border: `1px solid ${BRAND.gold}30`,
+                cursor: 'pointer',
+                minHeight: '120px',
+              }}
+            >
+              <FoodPhoto
+                src={getSideImageUrl(item.name, menuItems, configSides)}
+                alt={item.name}
+                style={{ width: '160px', height: '160px', borderRadius: '10px' }}
+              />
+              <span style={{
+                fontFamily: "'Oswald', sans-serif",
+                fontWeight: 700,
+                fontSize: 'clamp(1rem, 1.4vw, 1.4rem)',
+                color: BRAND.bone,
+                letterSpacing: '1.5px',
+                textTransform: 'uppercase',
+                textAlign: 'center',
+              }}>{item.name}</span>
+              <span style={{
+                fontFamily: "'Oswald', sans-serif",
+                fontSize: '0.85rem',
+                color: `${BRAND.cream}90`,
+                letterSpacing: '1.5px',
+                textTransform: 'uppercase',
+              }}>
+                {item.steps.length} {es ? 'pasos' : 'steps'}
+              </span>
+            </button>
+          ))}
+        </div>
+        <div style={{ marginTop: '3vh' }}>
+          <button type="button" style={chipBtn} onClick={() => setSession(null)}>
+            {es ? 'VOLVER' : 'BACK'}
+          </button>
+        </div>
+      </div>
+    );
+  } else {
+    // Step-through. One step per screen; the single primary action
+    // checks the current step off AND advances, so a greasy-handed
+    // trainee only ever needs one big target. Past the last step →
+    // completion card.
+    const steps = activeItem.steps;
+    const total = steps.length;
+    const idx = session.stepIndex;
+    const complete = idx >= total;
+    const markDoneNext = () => setSession((prev) => ({
+      ...prev,
+      checked: prev.checked.includes(prev.stepIndex) ? prev.checked : [...prev.checked, prev.stepIndex],
+      stepIndex: prev.stepIndex + 1,
+    }));
+    const goBack = () => setSession((prev) => ({ ...prev, stepIndex: Math.max(0, prev.stepIndex - 1) }));
+
+    body = (
+      <div style={{ ...s.qualityCoach, justifyContent: 'flex-start' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          width: 'min(92vw, 1500px)',
+        }}>
+          <button type="button" style={chipBtn} onClick={() => setSession(null)}>
+            {es ? 'SALIR' : 'EXIT'}
+          </button>
+          <div style={{
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 700,
+            fontSize: 'clamp(1.1rem, 1.8vw, 1.8rem)',
+            color: BRAND.bone,
+            letterSpacing: '2px',
+            textTransform: 'uppercase',
+          }}>{activeItem.name}</div>
+          <div style={{
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 700,
+            fontSize: 'clamp(1rem, 1.4vw, 1.4rem)',
+            color: `${BRAND.cream}90`,
+            letterSpacing: '2px',
+            minWidth: '64px',
+            textAlign: 'right',
+          }}>
+            {complete ? `${total} / ${total}` : `${idx + 1} / ${total}`}
+          </div>
+        </div>
+
+        {complete ? (
+          <div key="learn-complete" style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '3vh',
+            animation: 'lcQualityFade 400ms ease-out',
+          }}>
+            <div style={{ fontSize: 'clamp(4rem, 9vw, 9rem)', color: BRAND.green, lineHeight: 1 }}>✓</div>
+            <div style={{
+              fontFamily: "'Oswald', sans-serif",
+              fontWeight: 700,
+              fontSize: 'clamp(1.6rem, 2.8vw, 2.8rem)',
+              color: BRAND.bone,
+              letterSpacing: '3px',
+              textTransform: 'uppercase',
+            }}>
+              {es ? 'ARMADO COMPLETO' : 'BUILD COMPLETE'}
+            </div>
+            <div style={{ display: 'flex', gap: '20px', marginTop: '2vh' }}>
+              <button
+                type="button"
+                onClick={() => setSession({ view: 'picker' })}
+                style={{
+                  ...chipBtn,
+                  background: BRAND.gold,
+                  color: BRAND.charcoal,
+                  border: 'none',
+                  minHeight: '64px',
+                  padding: '14px 32px',
+                  fontSize: 'clamp(1rem, 1.4vw, 1.4rem)',
+                }}
+              >
+                {es ? 'OTRO PLATILLO' : 'PRACTICE ANOTHER'}
+              </button>
+              <button type="button" style={{ ...chipBtn, minHeight: '64px', padding: '14px 32px' }} onClick={() => setSession(null)}>
+                {es ? 'LISTO' : 'DONE'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div key={`learn-step-${idx}-${language}`} style={{
+            flex: 1,
+            display: 'flex',
+            gap: 'clamp(24px, 4vw, 64px)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 'min(92vw, 1500px)',
+            animation: 'lcQualityFade 300ms ease-out',
+          }}>
+            <FoodPhoto
+              src={getSideImageUrl(activeItem.name, menuItems, configSides)}
+              alt={activeItem.name}
+              style={{ width: '30vh', height: '30vh', borderRadius: '14px', flexShrink: 0 }}
+            />
+            <div style={{ display: 'flex', gap: '20px', alignItems: 'baseline', textAlign: 'left', minWidth: 0 }}>
+              <span style={{
+                flexShrink: 0,
+                color: BRAND.blue,
+                fontFamily: "'Oswald', sans-serif",
+                fontWeight: 700,
+                fontSize: 'clamp(2rem, 4vw, 4rem)',
+              }}>{idx + 1}.</span>
+              <span style={{
+                fontSize: 'clamp(1.8rem, 3.4vw, 3.4rem)',
+                color: language === 'en' ? BRAND.bone : BRAND.cream,
+                fontFamily: "'Playfair Display', Georgia, serif",
+                lineHeight: 1.3,
+                fontStyle: es ? 'italic' : 'normal',
+              }}>{pickTipText(steps[idx], language)}</span>
+            </div>
+          </div>
+        )}
+
+        {!complete && (
+          <>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '2.5vh' }}>
+              {steps.map((_, si) => (
+                <span key={si} style={{
+                  width: 'clamp(10px, 1vw, 14px)',
+                  height: 'clamp(10px, 1vw, 14px)',
+                  borderRadius: '50%',
+                  background: session.checked.includes(si) ? BRAND.gold : 'transparent',
+                  border: si === idx ? `2px solid ${BRAND.blue}` : `1px solid ${BRAND.cream}50`,
+                  boxSizing: 'border-box',
+                }} />
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '20px', width: 'min(92vw, 900px)', paddingBottom: '2vh' }}>
+              <button
+                type="button"
+                onClick={goBack}
+                disabled={idx === 0}
+                style={{
+                  ...chipBtn,
+                  flex: 1,
+                  minHeight: '80px',
+                  fontSize: 'clamp(1rem, 1.5vw, 1.5rem)',
+                  opacity: idx === 0 ? 0.35 : 1,
+                  cursor: idx === 0 ? 'default' : 'pointer',
+                }}
+              >
+                {es ? 'ATRÁS' : 'BACK'}
+              </button>
+              <button
+                type="button"
+                onClick={markDoneNext}
+                style={{
+                  ...chipBtn,
+                  flex: 2,
+                  minHeight: '80px',
+                  background: BRAND.gold,
+                  color: BRAND.charcoal,
+                  border: 'none',
+                  fontSize: 'clamp(1.1rem, 1.7vw, 1.7rem)',
+                }}
+              >
+                ✓ {idx === total - 1 ? (es ? 'TERMINAR' : 'FINISH') : (es ? 'HECHO · SIGUIENTE' : 'DONE · NEXT')}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={s.container}>
+      <style>{`
+        @keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+      `}</style>
+      <Header {...headerProps} />
+      {body}
     </div>
   );
 }
