@@ -32,6 +32,7 @@ Real-time kitchen display system for **WILDBIRD**. Replaces mental math and gut 
 - **Audio alerts**: new-order chime, warning beep on yellow, escalating danger pulse on red
 - **Stale-ticket auto-hide** based on `max_ticket_minutes` (default 60) — keeps the board clean when Toast doesn't send completion events
 - **Persistent device_id** in localStorage — heartbeats every 60s, recovers automatically on disconnect
+- **Runs on iPad** — installable PWA (standalone, no browser chrome), responsive down to 1024px landscape, portrait shows a rotate prompt. See `DEPLOYMENT.md`
 - **Per-device pairing** — admin mints a `?dt=` link per screen; bump / unbump / checklists / bird log require it. Revoke or re-issue a single screen from the admin Devices tab without touching the others
 - **Customer name** extracted from delivery-app prefixes (DoorDash, UberEats, Grubhub, Postmates) and walk-in receipts
 
@@ -83,7 +84,7 @@ Real-time kitchen display system for **WILDBIRD**. Replaces mental math and gut 
 | P2 | Comparison windows in analytics | "This week vs last week" KPIs |
 | P2 | Multi-tenant admin scoping | Restrict admins to specific stores via `lc_admins` table with `store_ids` array |
 | P3 | Order detail click-through | Tap an item to see modifiers + special instructions |
-| P3 | Station-filtered display URL | `?station=grill` to put a screen at each station |
+| P3 | Station-filtered display URL | `?station=grill` to put a screen at each station. Station is already a field on every menu item + side, so this is a filter, not a new taxonomy |
 
 ---
 

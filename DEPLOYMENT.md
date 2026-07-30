@@ -200,6 +200,63 @@ After enforcement, an unpaired screen shows a red **"This screen is not paired"*
 
 ---
 
+## Per-store kiosk: iPad setup
+
+An iPad is a cheaper second (or replacement) screen than a kitchen-rated touchscreen, and it's the right hardware for an expo/prep station or a GM walking the floor. Line Coach runs as an installed web app — no App Store, no build.
+
+**Landscape only.** Portrait doesn't have the horizontal room for the order column plus the sides rail, so the display shows a rotate prompt instead of a cramped layout. Mount accordingly.
+
+### 1. Pair the screen first
+
+Admin → **Devices** → **+ Pair a screen** (see *Device pairing and the kill switch* above). Copy the URL. You'll open it on the iPad in step 3.
+
+### 2. iPad settings
+
+| Setting | Value | Why |
+|---|---|---|
+| Settings → Display & Brightness → **Auto-Lock** | **Never** | Otherwise the board sleeps mid-service. |
+| Settings → Accessibility → **Guided Access** | On, set a passcode | Pins the app; disables the home gesture. |
+| Settings → Display & Brightness → **True Tone** | Off (optional) | Keeps food photos colour-accurate across screens. |
+
+### 3. Install it
+
+1. Open the paired URL in **Safari** (not Chrome — only Safari can install to the home screen).
+2. Share → **Add to Home Screen** → name it *Line Coach*.
+3. Launch from the home-screen icon. You should get **no Safari chrome** — no URL bar, no toolbars.
+4. Tap the screen once. That's what unlocks audio: iOS blocks autoplay until a user gesture, so the first tap arms the new-order chime and the SLA alerts.
+5. Confirm in Admin → Devices that it shows **Online** with no UNPAIRED badge.
+
+The pairing token is saved to the iPad on first load, so the app stays paired even though iOS may drop the query string on later launches.
+
+### 4. Lock it down
+
+With Line Coach open, triple-click the side/home button → **Guided Access** → **Start**. Inside Guided Access options you can also disable the volume buttons and touch areas you don't want cooks hitting.
+
+> **Guided Access does not survive a reboot.** After a power blip the iPad boots to the lock screen and a human has to unlock it and re-enter Guided Access. For a genuinely set-and-forget kiosk you need Apple Business Manager + an MDM (Jamf, Mosyle, Kandji) in **Single App Mode**, which re-arms itself automatically. Guided Access is the $0 option and it is meaningfully worse; MDM runs roughly $2–3/device/month. Worth deciding deliberately rather than discovering it after the first outage.
+
+### What iOS will and won't do
+
+| Works | Doesn't |
+|---|---|
+| Standalone launch, no browser chrome | Orientation lock — iOS ignores the manifest, hence the rotate prompt |
+| Custom home-screen icon + charcoal splash | True fullscreen — the status bar is always visible |
+| Audio alerts, after the first tap | Background execution — a backgrounded app has its timers throttled and drops the realtime socket |
+| Safe-area padding around the notch | |
+
+Backgrounding is handled: the display refetches on `visibilitychange`/`focus` and reconnects the Supabase channel with backoff, so a screen that sleeps and wakes catches up on its own.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Red "This screen is not paired" banner | The token is missing, revoked, or superseded by a re-issue. Admin → Devices → **Re-issue link**, open it on the iPad. |
+| Safari URL bar still visible | Launched from a Safari tab or a bookmark, not the home-screen icon. Re-add to home screen. |
+| No sound | Tap the screen once. If still silent, check the mute switch and that Settings → Sounds volume isn't zero. |
+| Screen dims mid-shift | Auto-Lock isn't set to Never. |
+| Board looks cramped / rotate prompt shows | The iPad is in portrait. Rotate, and check the mount. |
+
+---
+
 ## Per-store store_id list
 
 Hardcoded slugs (also in `lib/line-coach.js TOAST_LOCATION_MAP`):

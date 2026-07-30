@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { canonicalSideName, isCanonicalSide } from '@/lib/side-canonical';
+import useViewport from '@/src/useViewport';
 
 // Normalize a quality tip into { en, es }. Mirrors lib/line-coach.js so
 // the client doesn't pull in server-only deps. Accepts legacy string tips.
@@ -677,6 +678,11 @@ export default function LineCoachDisplay({ storeId }) {
   const HOLD_DURATION_MS = 800;
   const UNDO_WINDOW_MS = 5000;
 
+  // Layout facts that CSS can't express — how many cards actually fit,
+  // and how hard to shrink the fixed card chrome. Everything expressible
+  // as CSS lives in the stylesheet in app/layout.js instead.
+  const { chromeScale } = useViewport();
+
   // Detect touch capability + URL override. ?touch=1 forces on, ?touch=0
   // forces off, anything else auto-detects. Set in an effect (post-mount)
   // so the SSR pass and first client render see the same value (false)
@@ -990,6 +996,31 @@ export default function LineCoachDisplay({ storeId }) {
   const pairingBanner = pairingError ? (
     <PairingBanner reason={pairingError} language={language} />
   ) : null;
+
+  // Portrait on a tablet. The board needs horizontal room — the sides
+  // rail plus ~400px of fixed card chrome doesn't survive a 768px
+  // column, and dropping the rail loses one of the display's better
+  // features. iOS ignores the manifest's orientation lock, so a
+  // rotate prompt is the honest option rather than shipping a cramped
+  // portrait layout and pretending it's fine. Purely CSS-driven
+  // (see .lc-rotate-prompt) so it costs nothing in landscape.
+  const rotatePrompt = (
+    <div className="lc-rotate-prompt" aria-live="polite">
+      <div style={{ fontSize: '3rem' }}>⟲</div>
+      <div style={{
+        fontFamily: "'Oswald', sans-serif", fontWeight: 700,
+        fontSize: '1.4rem', letterSpacing: '2px', textTransform: 'uppercase',
+        color: BRAND.gold,
+      }}>
+        {language === 'es' ? 'Gira la pantalla' : 'Rotate this screen'}
+      </div>
+      <div style={{ color: `${BRAND.cream}CC`, fontSize: '1rem', maxWidth: '340px' }}>
+        {language === 'es'
+          ? 'Line Coach necesita orientación horizontal para mostrar el tablero completo.'
+          : 'Line Coach needs landscape orientation to show the full board.'}
+      </div>
+    </div>
+  );
 
   // ── Recipe reference ──────────────────────────────────
   // Read-only step-by-step reference for everything the line executes:
@@ -1996,19 +2027,20 @@ export default function LineCoachDisplay({ storeId }) {
     const avgLabel = language === 'es' ? 'prom' : 'avg';
     const onTimeLabel = language === 'es' ? 'a tiempo' : 'on time';
     return (
-      <div style={s.container}>
+      <div className="lc-fill" style={s.container}>
         <style>{`
           @keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
           @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
         `}</style>
         <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
         {pairingBanner}
+      {rotatePrompt}
         {birdBanner}
         {checklistNudge}
         {checklistOverlay}
         {birdOverlay}
         {recipeOverlay}
-        <div style={s.qualityCoach}>
+        <div className="lc-fill" style={s.qualityCoach}>
           <div style={{ ...s.qualityLabel, ...(isFeedbackTip ? { color: BRAND.terracotta } : {}) }}>{tipLabel}</div>
           <div style={s.qualityTipBlock} key={`${qualityTipIndex}-${language}`}>
             {text && (
@@ -2149,7 +2181,7 @@ export default function LineCoachDisplay({ storeId }) {
     const sourceLabel = order.priority === 'rush' ? 'ASAP' : (diningLabel ? diningLabel.toUpperCase() : null);
 
     return (
-      <div style={s.container}>
+      <div className="lc-fill" style={s.container}>
         <style>{`
           @keyframes lcAllergyPulse {
             0%, 100% { box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.85); }
@@ -2166,6 +2198,7 @@ export default function LineCoachDisplay({ storeId }) {
         `}</style>
         <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
         {pairingBanner}
+      {rotatePrompt}
         {birdBanner}
         {checklistOverlay}
         {birdOverlay}
@@ -2322,11 +2355,11 @@ export default function LineCoachDisplay({ storeId }) {
         {/* Two-column body: photo + coach tip ─────────── */}
         {/* `key` includes the rotating item index so each rotation
             re-mounts the block and triggers the fade-in animation. */}
-        <div key={`focus-${focusItemIndex % itemCount}-${language}-${learnModeOn ? 'learn' : 'coach'}`} style={{
+        <div key={`focus-${focusItemIndex % itemCount}-${language}-${learnModeOn ? 'learn' : 'coach'}`} className="lc-fill" style={{
           display: 'flex',
           gap: '24px',
           padding: '16px',
-          minHeight: 'calc(100vh - 200px)',
+          '--lc-offset': '200px',
           animation: 'lcFocusFade 420ms cubic-bezier(0.2, 0.8, 0.2, 1)',
         }}>
           {/* Left: photo + entree name + sides + modifiers */}
@@ -2340,10 +2373,11 @@ export default function LineCoachDisplay({ storeId }) {
             <FoodPhoto
               src={getSideImageUrl(primaryItem?.name || '', menuItems, configSides)}
               alt={primaryItem?.name || ''}
+              className="lc-svh"
               style={{
                 width: '100%',
                 aspectRatio: '4 / 3',
-                maxHeight: '46vh',
+                '--lc-vh': 46,
                 borderRadius: '12px',
               }}
             />
@@ -2533,7 +2567,7 @@ export default function LineCoachDisplay({ storeId }) {
   }
 
   return (
-    <div style={s.container}>
+    <div className="lc-fill" style={s.container}>
       <style>{`
         @keyframes lcAllergyPulse {
           0%, 100% { box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.85); }
@@ -2581,6 +2615,7 @@ export default function LineCoachDisplay({ storeId }) {
       `}</style>
       <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
       {pairingBanner}
+      {rotatePrompt}
       {birdBanner}
       {checklistOverlay}
       {birdOverlay}
@@ -2600,7 +2635,7 @@ export default function LineCoachDisplay({ storeId }) {
         />
       )}
 
-      <div style={s.mainGrid}>
+      <div className="lc-main">
         {/* Left Column: Fire Order — grouped by order */}
         <div style={s.leftCol}>
           <div style={s.orderListContainer}>
@@ -2621,6 +2656,14 @@ export default function LineCoachDisplay({ storeId }) {
               // Touch-era cap: rush max went 8 → 6 because 22" wall-mount
               // taps need ≥60px targets (was 48px). Better to scroll past
               // 6 than to mis-tap the wrong card with greasy hands.
+              //
+              // Deliberately still a fixed count, not a fitted one. Card
+              // height varies with how many entrees an order has, so any
+              // static "rows that fit" estimate is right only for
+              // single-item orders and over-counts for everything else —
+              // it never actually reduced the cap at any supported
+              // viewport. Overflow is handled honestly by scrolling
+              // (orderListContainer) instead of predicted badly here.
               const MAX_VISIBLE = isComfortable ? 3 : 5;
               const visibleOrders = orderSequence.slice(0, MAX_VISIBLE);
               const hiddenCount = orderSequence.length - MAX_VISIBLE;
@@ -2632,13 +2675,21 @@ export default function LineCoachDisplay({ storeId }) {
               // the display matters most and cooks are furthest from
               // it. Comfortable mode lifted proportionally so the two
               // tiers still feel related.
+              // px() shrinks the FIXED chrome as the column narrows. The
+              // sidebar, photo and side rail together consume ~400px
+              // before any text renders; on a 1024px iPad that leaves
+              // ~300px for an entree name and "Boneless Breast Market
+              // Plate" wraps to three lines. Text sizes are left alone —
+              // they're clamp()-based or deliberately large for distance
+              // reading, and shrinking them is the opposite of the point.
+              const px = (n) => `${Math.round(n * chromeScale)}px`;
               const rowPad = isComfortable ? '14px 0' : '10px 0';
-              const sidebarW = isComfortable ? '130px' : '116px';
+              const sidebarW = px(isComfortable ? 130 : 116);
               const orderNumSize = isComfortable ? '1.7rem' : '1.5rem';
               const customerSize = isComfortable ? '1.1rem' : '0.95rem';
               const badgeSize = isComfortable ? '1rem' : '0.85rem';
               const timerSize = isComfortable ? '2rem' : '1.7rem';
-              const photoSize = isComfortable ? '200px' : '140px';
+              const photoSize = px(isComfortable ? 200 : 140);
               const entreeNameSize = isComfortable ? '2.55rem' : '1.95rem';
               // Modifier + sides line are now BIGGER than the entree
               // name in rush mode and matched-or-larger in comfortable.
@@ -2679,7 +2730,7 @@ export default function LineCoachDisplay({ storeId }) {
                       : unattachedSides;
                     const looseAllAlaCarte = looseSides.length > 0 && looseSides.every((side) => side && side.alaCarte);
                     const cardHasSides = itemsCarrySides || soloExtraSides.length > 0 || looseSides.length > 0;
-                    const railW = isComfortable ? 140 : 120;
+                    const railW = Math.round((isComfortable ? 140 : 120) * chromeScale);
                     // x-offset of the text column, for order-level rows
                     // (loose sides, notes) to align with the copy above.
                     const textIndent = `${parseInt(photoSize, 10) + 12 + (cardHasSides ? railW + 12 : 0)}px`;
@@ -3447,12 +3498,13 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="lc-sheet"
         style={{
           background: BRAND.charcoal,
           borderRadius: '14px',
           maxWidth: '900px',
           width: '100%',
-          maxHeight: '90vh',
+          '--lc-vh': 90,
           overflowY: 'auto',
           padding: '28px 32px',
           boxShadow: `0 24px 48px rgba(0,0,0,0.45), inset 4px 0 0 ${sevColor}`,
@@ -3941,9 +3993,9 @@ function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, o
       <div
         onClick={(e) => e.stopPropagation()}
         onPointerDown={() => setLastTouch(Date.now())}
+        className="lc-sheet"
         style={{
           width: 'min(940px, 94vw)',
-          maxHeight: '88vh',
           overflowY: 'auto',
           background: BRAND.charcoalDark,
           border: `2px solid ${BRAND.gold}`,
@@ -4626,9 +4678,9 @@ function ChecklistOverlay({ checklists, language, onClose, onToggle, onComplete 
       <div
         onClick={(e) => e.stopPropagation()}
         onPointerDown={() => setLastTouch(Date.now())}
+        className="lc-sheet"
         style={{
           width: 'min(940px, 94vw)',
-          maxHeight: '88vh',
           overflowY: 'auto',
           background: BRAND.charcoalDark,
           border: `2px solid ${BRAND.gold}`,
@@ -4820,9 +4872,10 @@ function RecipeOverlay({ recipes, language, menuItems, configSides, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         onPointerDown={() => setLastTouch(Date.now())}
+        className="lc-sheet"
         style={{
           width: 'min(1100px, 96vw)',
-          maxHeight: '90vh',
+          '--lc-vh': 90,
           overflowY: 'auto',
           background: BRAND.charcoalDark,
           border: `2px solid ${BRAND.gold}`,
@@ -4908,7 +4961,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
       // Whole surface is the tap target — a trainee shouldn't have to
       // find a small button from across the line. Plain onClick, never
       // the hold-to-bump pointer machine (that's for order cards).
-      <div style={{ ...s.qualityCoach, cursor: 'pointer' }} onClick={() => setSession({ view: 'picker' })}>
+      <div className="lc-fill" style={{ ...s.qualityCoach, cursor: 'pointer' }} onClick={() => setSession({ view: 'picker' })}>
         <div style={{ ...s.qualityLabel, color: BRAND.blue }}>
           {es ? 'MODO APRENDIZAJE' : 'LEARN MODE'}
         </div>
@@ -4938,11 +4991,11 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
               maxWidth: '30vh',
             }}>{learnItem.name}</div>
           </div>
-          <div style={{
+          <div className="lc-svh" style={{
             display: 'flex',
             flexDirection: 'column',
             gap: manySteps ? '10px' : '16px',
-            maxHeight: '56vh',
+            '--lc-vh': 56,
             overflowY: 'auto',
             minWidth: 0,
           }}>
@@ -5002,16 +5055,16 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
     );
   } else if (view === 'picker') {
     body = (
-      <div style={s.qualityCoach}>
+      <div className="lc-fill" style={s.qualityCoach}>
         <div style={{ ...s.qualityLabel, color: BRAND.blue }}>
           {es ? 'ELIGE UN PLATILLO PARA PRACTICAR' : 'CHOOSE A DISH TO PRACTICE'}
         </div>
-        <div style={{
+        <div className="lc-sheet" style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
           gap: '20px',
           width: 'min(90vw, 1400px)',
-          maxHeight: '68vh',
+          '--lc-vh': 68,
           overflowY: 'auto',
           animation: 'lcQualityFade 400ms ease-out',
         }}>
@@ -5083,7 +5136,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
     const goBack = () => setSession((prev) => ({ ...prev, stepIndex: Math.max(0, prev.stepIndex - 1) }));
 
     body = (
-      <div style={{ ...s.qualityCoach, justifyContent: 'flex-start' }}>
+      <div className="lc-fill" style={{ ...s.qualityCoach, justifyContent: 'flex-start' }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -5243,7 +5296,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
   }
 
   return (
-    <div style={s.container}>
+    <div className="lc-fill" style={s.container}>
       <style>{`
         @keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
@@ -5258,7 +5311,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
 
 function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, learnAllowed = false, learnMode = false, onLearnToggle, checklistAvailable = false, checklistDue = 0, onChecklistOpen, birdAvailable = false, birdCookingQty = 0, birdHoldingQty = 0, birdAlert = 0, onBirdOpen, recipesAvailable = false, onRecipesOpen }) {
   return (
-    <div style={s.header}>
+    <div className="lc-header" style={s.header}>
       <div style={s.headerLeft}>
         {/* Brand logo replaces the wordmark. Sized by height so the
             ~4.18:1 logo image scales cleanly. onError falls back to
@@ -5299,7 +5352,7 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, l
           </span>
         )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div className="lc-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {learnAllowed && onLearnToggle && (
           // Learn-mode chip (new-hire build-step walkthroughs). Only
           // rendered when the store's master switch is on. Active state
@@ -5503,7 +5556,7 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, l
 
 const s = {
   container: {
-    minHeight: '100vh',
+    '--lc-offset': '0px',
     background: BRAND.charcoal,
     color: BRAND.bone,
     fontFamily: "'Open Sans', 'Helvetica Neue', sans-serif",
@@ -5545,15 +5598,9 @@ const s = {
     fontVariantNumeric: 'tabular-nums',
     fontFamily: "'Open Sans', sans-serif",
   },
-  // Main Layout
-  mainGrid: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 320px',
-    gap: '8px',
-    padding: '8px',
-    height: 'calc(100vh - 56px)',
-    overflow: 'hidden',
-  },
+  // Main Layout lives in the `.lc-main` rule in app/layout.js — it needs
+  // @media breakpoints for the sides rail and a two-declaration dvh
+  // fallback, neither of which an inline style object can express.
   leftCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   // Order list. Same flex shape as sidesContainer but scrollable, and
   // deliberately NOT shared with it — the sides rail sizes itself to fit
@@ -5642,7 +5689,7 @@ const s = {
   // Quality Coach — fills the screen below the header so tips are
   // readable from anywhere on the line. EN stacked on top of ES.
   qualityCoach: {
-    minHeight: 'calc(100vh - 60px)',
+    '--lc-offset': '60px',
     padding: '4vh 6vw',
     display: 'flex',
     flexDirection: 'column',
