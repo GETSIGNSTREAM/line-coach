@@ -377,6 +377,14 @@ function FoodPhoto({ src, alt, style = {} }) {
           src={src}
           alt={alt}
           onError={() => setFailed(true)}
+          // iPadOS starts a native image drag on long-press, which fires
+          // pointercancel and kills an in-flight hold-to-bump. Suppressing
+          // the drag is what makes the 800ms hold survive on a tablet.
+          draggable={false}
+          // iOS also pops a "Save Image / Copy" callout on long-press over
+          // an <img>; userSelect:none does not suppress it. The rule lives
+          // in app/layout.js because React drops the inline form.
+          className="lc-no-callout"
           style={{
             width: '100%',
             height: '100%',
@@ -2092,12 +2100,15 @@ export default function LineCoachDisplay({ storeId }) {
         {recipeOverlay}
 
         <div
+          className="lc-no-callout"
           {...focusOrderHandlers}
           style={{
             position: 'relative',
             userSelect: 'none',
             WebkitUserSelect: 'none',
-            touchAction: touchEnabled ? 'none' : 'auto',
+            // See the card comment below — 'pan-y' keeps a scroll gesture
+            // from being read as a hold-to-bump.
+            touchAction: touchEnabled ? 'pan-y' : 'auto',
             transform: focusIsHolding ? 'scale(0.99)' : 'scale(1)',
             transition: focusIsHolding ? 'none' : 'transform 120ms ease-out',
           }}>
@@ -2519,7 +2530,7 @@ export default function LineCoachDisplay({ storeId }) {
       <div style={s.mainGrid}>
         {/* Left Column: Fire Order — grouped by order */}
         <div style={s.leftCol}>
-          <div style={s.sidesContainer}>
+          <div style={s.orderListContainer}>
             {orderSequence.length === 0 && (
               <div style={{ ...s.emptyState, fontSize: '1.5rem' }}>Clear</div>
             )}
@@ -2651,6 +2662,7 @@ export default function LineCoachDisplay({ storeId }) {
                     return (
                       <div key={order.id || oi}
                         data-fresh={freshOrderIdsRef.current.has(order.id) ? '1' : undefined}
+                        className="lc-no-callout"
                         {...orderHandlers}
                         style={{
                           marginTop: oi > 0 ? '8px' : 0,
@@ -2658,7 +2670,14 @@ export default function LineCoachDisplay({ storeId }) {
                           position: 'relative',
                           userSelect: 'none',
                           WebkitUserSelect: 'none',
-                          touchAction: touchEnabled ? 'none' : 'auto',
+                          // 'pan-y', not 'none': the board can overflow on a
+                          // short tablet viewport, and 'none' would swallow
+                          // the scroll and run the hold timer to completion —
+                          // a swipe would bump the order. With 'pan-y' the
+                          // browser claims a vertical drag as a scroll and
+                          // fires pointercancel, which the onPointerCancel
+                          // handler above already routes to cancelHold.
+                          touchAction: touchEnabled ? 'pan-y' : 'auto',
                           background: isHolding
                             ? `linear-gradient(90deg, ${BRAND.green}40 ${holdPct * 100}%, ${BRAND.charcoal} ${holdPct * 100}%)`
                             : BRAND.charcoal,
@@ -5133,6 +5152,8 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, l
         <img
           src="/WILDBIRD-LOGO-WHITE.png"
           alt="WILDBIRD"
+          draggable={false}
+          className="lc-no-callout"
           style={{ height: '44px', width: 'auto', display: 'block' }}
           onError={(e) => {
             e.currentTarget.style.display = 'none';
@@ -5420,6 +5441,29 @@ const s = {
     overflow: 'hidden',
   },
   leftCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  // Order list. Same flex shape as sidesContainer but scrollable, and
+  // deliberately NOT shared with it — the sides rail sizes itself to fit
+  // (vh-based thumbnails that shrink with count), whereas this list can
+  // genuinely overflow.
+  //
+  // MAX_VISIBLE caps the card *count*, not the total height, so on a
+  // shorter tablet viewport the rows still overrun the column. With
+  // overflow:hidden they were clipped with no scroll affordance and no
+  // indication — the "+N hidden" chip only counts orders past
+  // MAX_VISIBLE, not ones cut off by height. Measured on a 1180x820
+  // iPad: 2097px of content in a 764px column, so ~1300px unreachable.
+  // The MAX_VISIBLE comment above ("better to scroll past 6") always
+  // assumed this was scrollable.
+  orderListContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    WebkitOverflowScrolling: 'touch',
+    overscrollBehavior: 'contain',
+  },
   rightCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden', background: BRAND.charcoalDark, borderRadius: '8px', padding: '0 4px' },
   emptyState: {
     textAlign: 'center',

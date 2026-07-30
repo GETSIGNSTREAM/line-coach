@@ -2424,6 +2424,44 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           <button style={styles.btnSecondary} onClick={loadWebhookLogs} disabled={webhookLoading}>{webhookLoading ? 'Loading...' : 'Refresh'}</button>
           <span style={{ marginLeft: 'auto', color: `${BRAND.cream}80`, fontSize: '0.85rem' }}>{webhookLogs.length} entries</span>
         </div>
+        {/* How Toast is actually authenticating. The webhook still accepts
+            any request whose User-Agent contains 'Apache-HttpClient' with
+            no secret at all — that branch has to go, but deleting it while
+            Toast depends on it would empty every board mid-service. This
+            panel is the go/no-go: once 'user_agent' reads 0 across all six
+            stores over a 48-72h window, the bypass can be removed. */}
+        {webhookLogs.length > 0 && (() => {
+          const counts = webhookLogs.reduce((acc, l) => {
+            const k = l.auth_method || 'none';
+            acc[k] = (acc[k] || 0) + 1;
+            return acc;
+          }, {});
+          const uaCount = counts.user_agent || 0;
+          return (
+            <div style={{
+              display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap',
+              marginBottom: '12px', padding: '10px 12px', borderRadius: '6px',
+              background: BRAND.charcoal,
+              borderLeft: `4px solid ${uaCount > 0 ? BRAND.red : BRAND.green}`,
+            }}>
+              <span style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", fontSize: '0.8rem', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+                Auth method
+              </span>
+              {['hmac', 'bearer', 'user_agent', 'none'].map((k) => (
+                <span key={k} style={{
+                  fontSize: '0.8rem',
+                  color: k === 'user_agent' && counts[k] ? BRAND.red : `${BRAND.cream}CC`,
+                  fontFamily: 'monospace',
+                }}>{k}: <strong>{counts[k] || 0}</strong></span>
+              ))}
+              <span style={{ marginLeft: 'auto', fontSize: '0.78rem', color: uaCount > 0 ? BRAND.red : BRAND.green }}>
+                {uaCount > 0
+                  ? `${uaCount} request${uaCount === 1 ? '' : 's'} authenticated by User-Agent alone — configure the Toast secret before removing the fallback`
+                  : 'No User-Agent-only auth in this window'}
+              </span>
+            </div>
+          );
+        })()}
         <table style={styles.table}>
           <thead>
             <tr>
@@ -2432,13 +2470,14 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
               <th style={styles.th}>Event</th>
               <th style={styles.th}>Store</th>
               <th style={styles.th}>Order #</th>
+              <th style={styles.th}>Auth</th>
               <th style={styles.th}>Duration</th>
               <th style={styles.th}>Error</th>
             </tr>
           </thead>
           <tbody>
             {webhookLogs.length === 0 && !webhookLoading && (
-              <tr><td colSpan={7} style={{ ...styles.td, textAlign: 'center', color: `${BRAND.cream}60` }}>No webhook activity in this window</td></tr>
+              <tr><td colSpan={8} style={{ ...styles.td, textAlign: 'center', color: `${BRAND.cream}60` }}>No webhook activity in this window</td></tr>
             )}
             {webhookLogs.map((log) => {
               const isOpen = expandedLog === log.id;
@@ -2465,12 +2504,28 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
                     <td style={{ ...styles.td, fontSize: '0.8rem' }}>{log.event_type || '—'}</td>
                     <td style={{ ...styles.td, fontSize: '0.8rem' }}>{log.store_id || '—'}</td>
                     <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: '0.8rem' }}>{log.toast_order_id ? log.toast_order_id.slice(0, 8) + '…' : '—'}</td>
+                    <td style={{ ...styles.td, fontSize: '0.8rem' }}>
+                      {log.auth_method
+                        ? (
+                          <span style={{
+                            // Red for user_agent: that request carried no
+                            // secret at all and only got in on a header string.
+                            background: log.auth_method === 'user_agent' ? `${BRAND.red}20` : `${BRAND.cream}15`,
+                            color: log.auth_method === 'user_agent' ? BRAND.red : `${BRAND.cream}CC`,
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontSize: '0.72rem',
+                            fontFamily: 'monospace',
+                          }}>{log.auth_method}</span>
+                        )
+                        : '—'}
+                    </td>
                     <td style={{ ...styles.td, fontSize: '0.8rem' }}>{typeof log.duration_ms === 'number' ? `${log.duration_ms}ms` : '—'}</td>
                     <td style={{ ...styles.td, fontSize: '0.8rem', color: BRAND.red, maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.error_message || ''}</td>
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={7} style={{ ...styles.td, background: BRAND.charcoal, padding: '12px' }}>
+                      <td colSpan={8} style={{ ...styles.td, background: BRAND.charcoal, padding: '12px' }}>
                         <div style={{ color: `${BRAND.cream}80`, fontSize: '0.75rem', marginBottom: '6px' }}>IP: {log.ip || '—'} · Logged at {new Date(log.created_at).toISOString()}</div>
                         <pre style={{
                           background: BRAND.charcoalDark,
