@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { unbumpOrder } from '@/lib/line-coach';
+import { requireDevice } from '@/lib/auth';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
@@ -8,6 +9,10 @@ export async function POST(request) {
   const rl = checkRateLimit(rlKey, RATE_LIMITS.device.limit, RATE_LIMITS.device.windowMs);
   const rlRes = rateLimitResponse(rl);
   if (rlRes) return rlRes;
+
+  // Same gate as bump — restoring an order changes the board too.
+  const { error: authError } = await requireDevice(request);
+  if (authError) return authError;
 
   try {
     const body = await request.json();

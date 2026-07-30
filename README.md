@@ -13,7 +13,8 @@ Real-time kitchen display system for **WILDBIRD**. Replaces mental math and gut 
 | Web app (Vercel) | **Live** in production |
 | Database (Supabase) | **Live** — `lc_*` tables on the WINGMAN project |
 | Toast POS integration | **Live** — receiving order webhooks from 6 stores |
-| Pi kiosks | **Pending rollout** — see `DEPLOYMENT.md` |
+| Pi kiosks | **Live** — 6 stores, see `DEPLOYMENT.md` |
+| Device auth | **Grace period** — `LC_REQUIRE_DEVICE_AUTH` off until every screen is paired |
 | Real admin login | **Not started** — currently any password is accepted client-side; PUT/DELETE still validate JWT server-side |
 
 ---
@@ -31,6 +32,7 @@ Real-time kitchen display system for **WILDBIRD**. Replaces mental math and gut 
 - **Audio alerts**: new-order chime, warning beep on yellow, escalating danger pulse on red
 - **Stale-ticket auto-hide** based on `max_ticket_minutes` (default 60) — keeps the board clean when Toast doesn't send completion events
 - **Persistent device_id** in localStorage — heartbeats every 60s, recovers automatically on disconnect
+- **Per-device pairing** — admin mints a `?dt=` link per screen; bump / unbump / checklists / bird log require it. Revoke or re-issue a single screen from the admin Devices tab without touching the others
 - **Customer name** extracted from delivery-app prefixes (DoorDash, UberEats, Grubhub, Postmates) and walk-in receipts
 
 ### Admin (web)
@@ -64,7 +66,7 @@ Real-time kitchen display system for **WILDBIRD**. Replaces mental math and gut 
 | P0 | Image one Pi end-to-end per `DEPLOYMENT.md` | Validate audio + autoplay flag works |
 | P0 | Mount kitchen monitors at each store | Existing wall mounts may need replacement |
 | P0 | Run on-site setup at each store | ~30 min each: Pi → monitor → power → Wi-Fi/Ethernet |
-| P1 | Real admin login | Replace fake password input with JWT issuance via bcrypt-hashed admins table |
+| P1 | Real admin login | Replace fake password input with JWT issuance via bcrypt-hashed admins table. Note device tokens are only as strong as `ADMIN_PASSWORD` — anyone with it can mint them |
 | P1 | Toast HMAC secret rotation runbook | If we ever need to roll the secret |
 | P2 | pg_cron retention jobs scheduled | One-time SQL: `SELECT cron.schedule(...)` for purge + archive |
 | P2 | Train one cook per store on display | What it shows, when to ignore, hardware mute path |
@@ -129,7 +131,7 @@ All tables prefixed `lc_` to share a multi-product Supabase project safely.
 | `lc_orders_archive` | Cold storage for old bumped/cancelled rows |
 | `lc_brand_config` | Single-row brand-wide config (menu/sides/tips/hold_times) |
 | `lc_config` | Per-store config (settings only) |
-| `lc_devices` | Kiosk heartbeat tracking |
+| `lc_devices` | Kiosk heartbeat tracking + device pairing / revocation |
 | `lc_webhook_log` | Inbound Toast webhook diagnostics |
 
 Functions:

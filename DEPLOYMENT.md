@@ -139,7 +139,64 @@ sudo systemctl enable chromium-watchdog
 
 Open `https://wildbird.coach/?store=hollywood&admin` → **Devices** tab.
 
-Within ~2 minutes, the new Pi should appear in the device list with status **Online** (green dot) and a `display-hollywood-...` device ID. Rename it to something readable (e.g. "Hollywood Pi #1") via the DB or admin UI.
+Within ~2 minutes, the new Pi should appear in the device list with status **Online** (green dot). Rename it to something readable (e.g. "Hollywood Pi #1") via the DB or admin UI.
+
+---
+
+## Device pairing and the kill switch
+
+Every screen that can **change** something — bump, unbump, sign a checklist, log a bird — now needs its own token. Read-only endpoints (orders, config) stay open, so an unpaired screen still renders the board; it just can't act on it.
+
+This exists because the security model used to be "the Pi is bolted to the wall." Once screens move — an iPad at expo, one in a GM's hands — a URL that can clear a store's queue starts travelling, and there was previously no way to cut off one device.
+
+### Pairing a screen
+
+Admin → **Devices** → **+ Pair a screen**. Pick the store, optionally a station (blank = full board; comma-separated like `grill,fryer` for expo). The URL lands on your clipboard. Open it **once** on the target device.
+
+The token is persisted to that device's `localStorage` on first load, so it survives a reload or a home-screen launch that drops the query string.
+
+### Killing a lost or reassigned device
+
+| Action | What it does | Use when |
+|---|---|---|
+| **Re-issue link** | New token, same device row and history. Every older link for that device stops working. | The URL got shared / texted around. |
+| **Revoke** | Kills all its tokens, keeps the row visible and greyed out. Reversible via **Restore**. | iPad lost, someone left, screen temporarily out of service. |
+| **Remove** | Deletes the row entirely. Also a permanent kill. | Decommissioned hardware. |
+
+Revocation takes effect within ~30 seconds (there's a short in-memory cache on the auth lookup). **Revocation works even during the grace period below** — it is not gated by the enforcement flag.
+
+### Rollout: `LC_REQUIRE_DEVICE_AUTH`
+
+The six Pi kiosks are already live in stores pointed at untokenized URLs. Enforcing before they're paired would black out every kitchen, so enforcement is behind a flag.
+
+**Phase 1 — deploy with the flag off (default).**
+Unpaired writes are allowed and logged. Watch Vercel logs for `[device-auth] unauthenticated write allowed` to catch any writer you forgot about. Nothing changes for the kitchens.
+
+**Phase 2 — pair every screen.**
+Admin → Devices shows a gold **UNPAIRED** badge and a count banner for anything not yet paired. For each existing Pi, click **Pair**, copy the URL, then on the Pi:
+
+```bash
+ssh pi@line-coach-<store>.local
+# Replace the URL in the kiosk autostart with the paired one
+sed -i 's|https://wildbird.coach/?store=[^ ]*|<PASTE THE PAIRED URL HERE>|' \
+  ~/.config/lxsession/LXDE-pi/autostart
+# The watchdog unit has its own copy of the URL
+sudo sed -i 's|https://wildbird.coach/?store=[^ ]*|<PASTE THE PAIRED URL HERE>|' \
+  /etc/systemd/system/chromium-watchdog.service
+sudo systemctl daemon-reload
+sudo reboot
+```
+
+Confirm in Admin → Devices that the screen comes back **Online** with no UNPAIRED badge.
+
+> Both files need the edit. The autostart handles a normal boot; the watchdog handles a Chromium crash. Miss the second one and the kiosk silently reverts to an unpaired URL the first time Chromium restarts.
+
+**Phase 3 — enforce.**
+Once no screen shows UNPAIRED, set `LC_REQUIRE_DEVICE_AUTH=1` in Vercel and **redeploy** (env changes don't reach warm instances without one). Rollback is flipping it back and redeploying.
+
+After enforcement, an unpaired screen shows a red **"This screen is not paired"** banner rather than silently failing to bump.
+
+> Note: opening the display from the admin's **View Display** button gives you an *unpaired* screen. It renders fine but won't bump once enforcement is on. Pair yourself a manager device if you need to act from it.
 
 ---
 

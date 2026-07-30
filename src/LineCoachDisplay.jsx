@@ -693,6 +693,53 @@ export default function LineCoachDisplay({ storeId }) {
     );
   }, []);
 
+  // ── Device pairing token ──────────────────────────────
+  // Minted by an admin (POST /api/line-coach/device-token) and handed
+  // to a screen as ?dt=<jwt>. Persisted to localStorage on first load
+  // so a launch WITHOUT the query string stays paired — that's the case
+  // when a manager adds the page to their iPad home screen, since iOS
+  // resolves the manifest's start_url and drops the query string. The
+  // Pi kiosks relaunch from a fixed URL that still carries ?dt=, so
+  // they never depend on the fallback.
+  //
+  // Same post-mount pattern as touch/language above: SSR and first
+  // client render both see null, so no hydration mismatch.
+  const [deviceToken, setDeviceToken] = useState(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let tok = null;
+    try {
+      tok = new URLSearchParams(window.location.search).get('dt');
+    } catch { /* malformed query — fall through to storage */ }
+    if (tok) {
+      try { window.localStorage.setItem('lc-device-token', tok); } catch { /* private mode */ }
+    } else {
+      try { tok = window.localStorage.getItem('lc-device-token'); } catch { /* private mode */ }
+    }
+    setDeviceToken(tok || null);
+  }, []);
+
+  // Set when a write comes back 401 — the screen is unpaired, revoked,
+  // or superseded by a re-issued link. Surfaced as a persistent banner:
+  // a KDS that silently stops bumping is worse than one that says why.
+  const [pairingError, setPairingError] = useState(null);
+
+  // Every mutating call goes through this so the token is attached in
+  // exactly one place. Reads (orders, config) stay unauthenticated.
+  const authFetch = useCallback(async (url, opts = {}) => {
+    const headers = { ...(opts.headers || {}) };
+    if (deviceToken) headers.Authorization = `Bearer ${deviceToken}`;
+    const res = await fetch(url, { ...opts, headers });
+    if (res.status === 401) {
+      let reason = null;
+      try { reason = (await res.clone().json())?.reason || null; } catch { /* non-JSON body */ }
+      setPairingError(reason || 'unauthorized');
+    } else if (res.ok) {
+      setPairingError(null);
+    }
+    return res;
+  }, [deviceToken]);
+
   // Language toggle (EN | ES). Resolution priority — first hit wins:
   //   1. ?lang=en|es URL param (session override)
   //   2. localStorage 'lc-language' (device sticky — survives reload)
@@ -802,7 +849,7 @@ export default function LineCoachDisplay({ storeId }) {
     });
     let deviceId = null;
     try { deviceId = window.localStorage.getItem(`lc-device-id-${storeId}`); } catch { /* ignore */ }
-    fetch('/api/line-coach/checklist-runs', {
+    authFetch('/api/line-coach/checklist-runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ store_id: storeId, checklist_id: checklistId, item_id: itemId, checked, device_id: deviceId }),
@@ -812,7 +859,7 @@ export default function LineCoachDisplay({ storeId }) {
   }, [storeId, fetchChecklists]);
 
   const completeChecklist = useCallback(async (checklistId, initials) => {
-    const res = await fetch('/api/line-coach/checklist-runs/complete', {
+    const res = await authFetch('/api/line-coach/checklist-runs/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ store_id: storeId, checklist_id: checklistId, initials }),
@@ -877,7 +924,7 @@ export default function LineCoachDisplay({ storeId }) {
     let deviceId = null;
     try { deviceId = window.localStorage.getItem(`lc-device-id-${storeId}`); } catch { /* ignore */ }
     try {
-      await fetch('/api/line-coach/bird-log', {
+      await authFetch('/api/line-coach/bird-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ store_id: storeId, device_id: deviceId, ...payload }),
@@ -935,6 +982,14 @@ export default function LineCoachDisplay({ storeId }) {
   const birdBanner = (
     <BirdAlertBanner pullDue={birdPullDue} shredDue={birdShredDue} language={language} onOpen={openBirdLog} />
   );
+
+  // Unpaired / revoked screen. The board keeps rendering orders (reads
+  // are open) but nothing it does will stick, so say so loudly rather
+  // than let a cook hold a card over and over wondering why it won't
+  // clear. Bilingual because the line is Spanish-first.
+  const pairingBanner = pairingError ? (
+    <PairingBanner reason={pairingError} language={language} />
+  ) : null;
 
   // ── Recipe reference ──────────────────────────────────
   // Read-only step-by-step reference for everything the line executes:
@@ -1129,32 +1184,47 @@ export default function LineCoachDisplay({ storeId }) {
   }, [config]);
 
   useEffect(() => {
-    const storageKey = `lc-device-id-${storeId}`;
+    // Paired screens identify themselves by token — the server reads
+    // the device id off the JWT, so nothing device-specific goes in the
+    // body. Unpaired screens fall back to the legacy self-minted id,
+    // which is what keeps the six live Pi kiosks heartbeating until
+    // they're re-paired. That branch retires with the grace period.
     let deviceId = null;
-    try {
-      deviceId = localStorage.getItem(storageKey);
-    } catch { /* private mode / SSR */ }
-    if (!deviceId) {
-      deviceId = `display-${storeId}-${Math.random().toString(36).slice(2, 10)}`;
-      try { localStorage.setItem(storageKey, deviceId); } catch { /* ignore */ }
+    if (!deviceToken) {
+      const storageKey = `lc-device-id-${storeId}`;
+      try {
+        deviceId = localStorage.getItem(storageKey);
+      } catch { /* private mode / SSR */ }
+      if (!deviceId) {
+        deviceId = `display-${storeId}-${Math.random().toString(36).slice(2, 10)}`;
+        try { localStorage.setItem(storageKey, deviceId); } catch { /* ignore */ }
+      }
     }
 
     let cancelled = false;
+    const body = deviceToken
+      ? { store_id: storeId, device_type: 'kds' }
+      : { device_id: deviceId, store_id: storeId, device_type: 'kds' };
+
     const register = () =>
-      fetch('/api/line-coach/devices', {
+      authFetch('/api/line-coach/devices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device_id: deviceId, store_id: storeId, device_type: 'kds' }),
+        body: JSON.stringify(body),
       }).catch(() => {});
 
     const heartbeat = async () => {
       if (cancelled) return;
       try {
-        const res = await fetch('/api/line-coach/devices/heartbeat', {
+        const res = await authFetch('/api/line-coach/devices/heartbeat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_id: deviceId }),
+          body: JSON.stringify(deviceToken ? {} : { device_id: deviceId }),
         });
+        // 404 means the row is gone (admin removed it, or this screen
+        // has never registered). Re-register and let the next tick
+        // confirm — except when revoked, where re-registering would
+        // just 401 again.
         if (res.status === 404) await register();
       } catch { /* network blip — next tick will retry */ }
     };
@@ -1162,7 +1232,7 @@ export default function LineCoachDisplay({ storeId }) {
     register().then(heartbeat);
     const interval = setInterval(heartbeat, 60_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [storeId]);
+  }, [storeId, deviceToken, authFetch]);
 
   // ── Audio alerts ────────────────────────────────────
 
@@ -1486,7 +1556,7 @@ export default function LineCoachDisplay({ storeId }) {
       expiresAt: Date.now() + UNDO_WINDOW_MS,
     });
     try {
-      const res = await fetch('/api/line-coach/bump', {
+      const res = await authFetch('/api/line-coach/bump', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId }),
@@ -1523,7 +1593,7 @@ export default function LineCoachDisplay({ storeId }) {
     setBumpedToast(null);
     optimisticallyBumpedRef.current.delete(t.orderId);
     try {
-      await fetch('/api/line-coach/unbump', {
+      await authFetch('/api/line-coach/unbump', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: t.orderId }),
@@ -1932,6 +2002,7 @@ export default function LineCoachDisplay({ storeId }) {
           @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
         `}</style>
         <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
+        {pairingBanner}
         {birdBanner}
         {checklistNudge}
         {checklistOverlay}
@@ -2094,6 +2165,7 @@ export default function LineCoachDisplay({ storeId }) {
           }
         `}</style>
         <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
+        {pairingBanner}
         {birdBanner}
         {checklistOverlay}
         {birdOverlay}
@@ -2508,6 +2580,7 @@ export default function LineCoachDisplay({ storeId }) {
         }
       `}</style>
       <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
+      {pairingBanner}
       {birdBanner}
       {checklistOverlay}
       {birdOverlay}
@@ -3683,6 +3756,47 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
 // Attention banner: red pulsing when a batch hit cook time (pull it
 // before it dries out), gold when warmer batches are past the carve
 // window (shred, don't carve). Renders nothing when all is well.
+// Shown when a write comes back 401. Reads stay open, so the board
+// still looks alive — which is exactly the trap: without this a cook
+// holds a card, sees the progress fill, and watches the ticket stay put
+// with no explanation. Not a button: there is nothing the line can do
+// about it, so it points at the one person who can.
+function PairingBanner({ reason, language }) {
+  const es = language === 'es';
+  const detail = {
+    revoked: es ? 'Esta pantalla fue desconectada.' : 'This screen was revoked.',
+    superseded: es ? 'Se generó un enlace nuevo para esta pantalla.' : 'A newer link was issued for this screen.',
+    unknown_device: es ? 'Esta pantalla ya no está registrada.' : 'This screen is no longer registered.',
+    no_device_token: es ? 'Esta pantalla no está vinculada.' : 'This screen is not paired.',
+  }[reason] || (es ? 'Esta pantalla no está vinculada.' : 'This screen is not paired.');
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 16px 0' }}>
+      <div
+        role="status"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '12px',
+          padding: '12px 26px',
+          borderRadius: '999px',
+          background: BRAND.red,
+          border: `1px solid ${BRAND.red}`,
+          color: BRAND.white,
+          fontFamily: "'Oswald', sans-serif",
+          fontWeight: 700,
+          fontSize: 'clamp(0.95rem, 1.4vw, 1.4rem)',
+          letterSpacing: '2px',
+          textTransform: 'uppercase',
+          minHeight: '44px',
+          textAlign: 'center',
+        }}
+      >
+        {detail} {es ? 'Pide un enlace nuevo al admin.' : 'Ask your admin for a new link.'}
+      </div>
+    </div>
+  );
+}
+
 function BirdAlertBanner({ pullDue, shredDue, language, onOpen }) {
   if (pullDue.length === 0 && shredDue.length === 0) return null;
   const es = language === 'es';

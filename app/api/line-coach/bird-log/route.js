@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getBirdBatches, addBirdBatch, markBirdBatchPulled, resolveBirdBatch, undoBirdBatch, getConfig } from '@/lib/line-coach';
+import { requireDevice } from '@/lib/auth';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
@@ -52,6 +53,10 @@ export async function GET(request) {
 export async function POST(request) {
   const rlRes = limit(request);
   if (rlRes) return rlRes;
+
+  // Writes the bird log the whole line cooks against.
+  const { error: authError } = await requireDevice(request);
+  if (authError) return authError;
 
   try {
     const body = await request.json();
