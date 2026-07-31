@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { bumpOrder } from '@/lib/line-coach';
+import { requireDevice } from '@/lib/auth';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
@@ -8,6 +9,11 @@ export async function POST(request) {
   const rl = checkRateLimit(rlKey, RATE_LIMITS.device.limit, RATE_LIMITS.device.windowMs);
   const rlRes = rateLimitResponse(rl);
   if (rlRes) return rlRes;
+
+  // Paired devices only. Until this gate, anyone with the URL could
+  // clear a store's whole queue mid-rush from anywhere.
+  const { error: authError } = await requireDevice(request);
+  if (authError) return authError;
 
   try {
     const body = await request.json();

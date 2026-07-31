@@ -8,16 +8,32 @@
 #   1. Installs Chromium + helpers (unclutter, xdotool)
 #   2. Sets audio output to HDMI and volume to 85%
 #   3. Writes the autostart file that boots Chromium into kiosk mode
-#      pointed at https://wildbird.coach/?store=<STORE>&touch=1
+#      pointed at https://wildbird.coach/?store=<STORE>&touch=1&dt=<TOKEN>
 #   4. Installs a systemd watchdog so Chromium auto-restarts if it
 #      ever crashes
 #   5. Reboots when you confirm at the prompt
 #
 # USAGE
-#   curl -fsSL https://raw.githubusercontent.com/GETSIGNSTREAM/line-coach/main/scripts/setup-pi-kiosk.sh | bash -s -- <store-slug>
+#   curl -fsSL https://raw.githubusercontent.com/GETSIGNSTREAM/line-coach/main/scripts/setup-pi-kiosk.sh | bash -s -- <store-slug> [device-token]
 #
 # Or after cloning the repo:
-#   bash scripts/setup-pi-kiosk.sh <store-slug>
+#   bash scripts/setup-pi-kiosk.sh <store-slug> [device-token]
+#
+# DEVICE TOKEN
+#   Get it from Admin → Devices → "+ Pair a screen" (pick the store, leave
+#   the station blank for a full board). That copies a URL like
+#     https://wildbird.coach/?store=hollywood&touch=1&dt=eyJhbGci...
+#   Pass just the dt= value as the second argument.
+#
+#   The token is what lets this screen bump orders. Without it the kiosk
+#   still renders the board, but every bump is rejected once
+#   LC_REQUIRE_DEVICE_AUTH=1 is set — and the display shows a red
+#   "screen is not paired" banner. Omit it only if you are deliberately
+#   provisioning during the grace period and will re-pair later.
+#
+#   To re-pair a kiosk that is ALREADY deployed, you do not need to
+#   re-run this script. See DEPLOYMENT.md → "Re-pairing an existing
+#   kiosk" for the one-line sed + reboot.
 #
 # VALID STORE SLUGS
 #   hollywood, westwood, 3rd-la-brea, culver-city, dtla, el-segundo
@@ -40,6 +56,7 @@ if [[ $# -lt 1 ]]; then
 fi
 
 STORE_SLUG="$1"
+DEVICE_TOKEN="${2:-}"
 case "$STORE_SLUG" in
   hollywood|westwood|3rd-la-brea|culver-city|dtla|el-segundo)
     ;;
@@ -59,6 +76,14 @@ if [[ "${EUID}" -eq 0 ]]; then
 fi
 
 DISPLAY_URL="https://wildbird.coach/?store=${STORE_SLUG}&touch=1"
+if [[ -n "$DEVICE_TOKEN" ]]; then
+  DISPLAY_URL="${DISPLAY_URL}&dt=${DEVICE_TOKEN}"
+else
+  echo "WARNING: no device token supplied — this kiosk will not be able to"
+  echo "         bump orders once LC_REQUIRE_DEVICE_AUTH=1 is enabled."
+  echo "         Pair it in Admin -> Devices before enabling enforcement."
+  echo ""
+fi
 USER_HOME="$HOME"
 
 echo "════════════════════════════════════════════════════════════════"

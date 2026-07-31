@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getChecklistRuns, toggleChecklistItem } from '@/lib/line-coach';
+import { requireDevice } from '@/lib/auth';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
@@ -35,6 +36,9 @@ export async function GET(request) {
 export async function POST(request) {
   const rlRes = limit(request);
   if (rlRes) return rlRes;
+
+  const { error: authError } = await requireDevice(request);
+  if (authError) return authError;
 
   try {
     const body = await request.json();

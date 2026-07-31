@@ -139,7 +139,166 @@ sudo systemctl enable chromium-watchdog
 
 Open `https://wildbird.coach/?store=hollywood&admin` → **Devices** tab.
 
-Within ~2 minutes, the new Pi should appear in the device list with status **Online** (green dot) and a `display-hollywood-...` device ID. Rename it to something readable (e.g. "Hollywood Pi #1") via the DB or admin UI.
+Within ~2 minutes, the new Pi should appear in the device list with status **Online** (green dot). Rename it to something readable (e.g. "Hollywood Pi #1") via the DB or admin UI.
+
+---
+
+## Device pairing and the kill switch
+
+Every screen that can **change** something — bump, unbump, sign a checklist, log a bird — now needs its own token. Read-only endpoints (orders, config) stay open, so an unpaired screen still renders the board; it just can't act on it.
+
+This exists because the security model used to be "the Pi is bolted to the wall." Once screens move — an iPad at expo, one in a GM's hands — a URL that can clear a store's queue starts travelling, and there was previously no way to cut off one device.
+
+### Pairing a screen
+
+Admin → **Devices** → **+ Pair a screen**. Pick the store, optionally a station (blank = full board; comma-separated like `grill,fryer` for expo). The URL lands on your clipboard. Open it **once** on the target device.
+
+The token is persisted to that device's `localStorage` on first load, so it survives a reload or a home-screen launch that drops the query string.
+
+### Killing a lost or reassigned device
+
+| Action | What it does | Use when |
+|---|---|---|
+| **Re-issue link** | New token, same device row and history. Every older link for that device stops working. | The URL got shared / texted around. |
+| **Revoke** | Kills all its tokens, keeps the row visible and greyed out. Reversible via **Restore**. | iPad lost, someone left, screen temporarily out of service. |
+| **Remove** | Deletes the row entirely. Also a permanent kill. | Decommissioned hardware. |
+
+Revocation takes effect within ~30 seconds (there's a short in-memory cache on the auth lookup). **Revocation works even during the grace period below** — it is not gated by the enforcement flag.
+
+### Rollout: `LC_REQUIRE_DEVICE_AUTH`
+
+The six Pi kiosks are already live in stores pointed at untokenized URLs. Enforcing before they're paired would black out every kitchen, so enforcement is behind a flag.
+
+**Phase 1 — deploy with the flag off (default).**
+Unpaired writes are allowed and logged. Watch Vercel logs for `[device-auth] unauthenticated write allowed` to catch any writer you forgot about. Nothing changes for the kitchens.
+
+**Phase 2 — pair every screen.**
+Admin → Devices shows a gold **UNPAIRED** badge and a count banner for anything not yet paired. For each existing Pi, click **Pair**, copy the URL, then on the Pi:
+
+```bash
+ssh pi@line-coach-<store>.local
+# Replace the URL in the kiosk autostart with the paired one
+sed -i 's|https://wildbird.coach/?store=[^ ]*|<PASTE THE PAIRED URL HERE>|' \
+  ~/.config/lxsession/LXDE-pi/autostart
+# The watchdog unit has its own copy of the URL
+sudo sed -i 's|https://wildbird.coach/?store=[^ ]*|<PASTE THE PAIRED URL HERE>|' \
+  /etc/systemd/system/chromium-watchdog.service
+sudo systemctl daemon-reload
+sudo reboot
+```
+
+Confirm in Admin → Devices that the screen comes back **Online** with no UNPAIRED badge.
+
+> Both files need the edit. The autostart handles a normal boot; the watchdog handles a Chromium crash. Miss the second one and the kiosk silently reverts to an unpaired URL the first time Chromium restarts.
+
+**Phase 3 — enforce.**
+Once no screen shows UNPAIRED, set `LC_REQUIRE_DEVICE_AUTH=1` in Vercel and **redeploy** (env changes don't reach warm instances without one). Rollback is flipping it back and redeploying.
+
+After enforcement, an unpaired screen shows a red **"This screen is not paired"** banner rather than silently failing to bump.
+
+> Note: opening the display from the admin's **View Display** button gives you an *unpaired* screen. It renders fine but won't bump once enforcement is on. Pair yourself a manager device if you need to act from it.
+
+---
+
+## Per-store kiosk: iPad setup
+
+An iPad is a cheaper second (or replacement) screen than a kitchen-rated touchscreen, and it's the right hardware for an expo/prep station or a GM walking the floor. Line Coach runs as an installed web app — no App Store, no build.
+
+**Landscape only.** Portrait doesn't have the horizontal room for the order column plus the sides rail, so the display shows a rotate prompt instead of a cramped layout. Mount accordingly.
+
+### 1. Pair the screen first
+
+Admin → **Devices** → **+ Pair a screen** (see *Device pairing and the kill switch* above). Copy the URL. You'll open it on the iPad in step 3.
+
+### 2. iPad settings
+
+| Setting | Value | Why |
+|---|---|---|
+| Settings → Display & Brightness → **Auto-Lock** | **Never** | Otherwise the board sleeps mid-service. |
+| Settings → Accessibility → **Guided Access** | On, set a passcode | Pins the app; disables the home gesture. |
+| Settings → Display & Brightness → **True Tone** | Off (optional) | Keeps food photos colour-accurate across screens. |
+
+### 3. Install it
+
+1. Open the paired URL in **Safari** (not Chrome — only Safari can install to the home screen).
+2. Share → **Add to Home Screen** → name it *Line Coach*.
+3. Launch from the home-screen icon. You should get **no Safari chrome** — no URL bar, no toolbars.
+4. Tap the screen once. That's what unlocks audio: iOS blocks autoplay until a user gesture, so the first tap arms the new-order chime and the SLA alerts.
+5. Confirm in Admin → Devices that it shows **Online** with no UNPAIRED badge.
+
+The pairing token is saved to the iPad on first load, so the app stays paired even though iOS may drop the query string on later launches.
+
+### 4. Lock it down
+
+With Line Coach open, triple-click the side/home button → **Guided Access** → **Start**. Inside Guided Access options you can also disable the volume buttons and touch areas you don't want cooks hitting.
+
+> **Guided Access does not survive a reboot.** After a power blip the iPad boots to the lock screen and a human has to unlock it and re-enter Guided Access. For a genuinely set-and-forget kiosk you need Apple Business Manager + an MDM (Jamf, Mosyle, Kandji) in **Single App Mode**, which re-arms itself automatically. Guided Access is the $0 option and it is meaningfully worse; MDM runs roughly $2–3/device/month. Worth deciding deliberately rather than discovering it after the first outage.
+
+### What iOS will and won't do
+
+| Works | Doesn't |
+|---|---|
+| Standalone launch, no browser chrome | Orientation lock — iOS ignores the manifest, hence the rotate prompt |
+| Custom home-screen icon + charcoal splash | True fullscreen — the status bar is always visible |
+| Audio alerts, after the first tap | Background execution — a backgrounded app has its timers throttled and drops the realtime socket |
+| Safe-area padding around the notch | |
+
+Backgrounding is handled: the display refetches on `visibilitychange`/`focus` and reconnects the Supabase channel with backoff, so a screen that sleeps and wakes catches up on its own.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Red "This screen is not paired" banner | The token is missing, revoked, or superseded by a re-issue. Admin → Devices → **Re-issue link**, open it on the iPad. |
+| Safari URL bar still visible | Launched from a Safari tab or a bookmark, not the home-screen icon. Re-add to home screen. |
+| No sound | Tap the screen once. If still silent, check the mute switch and that Settings → Sounds volume isn't zero. |
+| Screen dims mid-shift | Auto-Lock isn't set to Never. |
+| Board looks cramped / rotate prompt shows | The iPad is in portrait. Rotate, and check the mount. |
+
+---
+
+## How deploys reach the kiosks
+
+**The guarantee: a deploy reaches every kiosk by the next time that kitchen is quiet.** Not instantly.
+
+The Pis launch Chromium once at boot against a fixed URL, and the watchdog only relaunches it if the process *dies*. Nothing about a Vercel deploy makes a running kiosk pick up new code on its own. Before this existed, a screen ran whatever bundle it downloaded at boot — for weeks — and the only remedy was SSHing into six machines to press F5. That is how the LEARN and RECIPES pills went missing in production after they shipped.
+
+Now the display polls `/api/line-coach/version` every 5 minutes and reloads itself when the build id changes — **but only when the board is completely idle**:
+
+- no tickets on the board, and it has been empty for at least 8 seconds (not just a gap between orders)
+- no overlay open — checklist, bird log, recipes, order detail
+- no bump in flight and no live undo window
+- nobody mid hold-to-bump
+
+If any of those is false the reload is **deferred, not cancelled** — it lands the moment the board goes quiet. Every store closes, so the worst case is overnight.
+
+There is deliberately no nightly-reload cron: the idle gate already covers it, and a fixed schedule would make a fix shipped at noon wait until morning even when the kitchen was empty all afternoon.
+
+**Verifying a deploy landed:** Admin → Devices shows each kiosk's last heartbeat, but heartbeats don't tell you the bundle version. The reliable check is to look at the screen. If you need it immediately, use the force-reload one-liner in the ops table.
+
+**If a kiosk never seems to update**, the likely cause is `/api/line-coach/version` being cached somewhere — it ships `Cache-Control: no-store` precisely to prevent that. Confirm with `curl -sI https://wildbird.coach/api/line-coach/version | grep -i cache`.
+
+---
+
+## Feature gates: why a pill might not appear
+
+Fresh code is necessary but not sufficient. Two header pills have gates that are **off by default**, and both are config, not code.
+
+### LEARN pill
+
+Requires `learn_mode_enabled` to be exactly `true` in **that store's** settings. It defaults to `false` and lives in `lc_config` (per store), not brand config.
+
+→ Admin → **Settings** → select the store → tick **Learn Mode**. **Repeat for each store** — six times for the full estate.
+
+### RECIPES pill
+
+Requires at least one menu item or side to have non-empty `build_steps`. This is brand-wide, so it's a single action for the whole estate.
+
+→ Admin → **Menu** → **Sync from Notion** (pulls build steps from the Culinary OS Line Build Guides). Or hand-enter via the CSV import's `build_steps_en` / `build_steps_es` columns.
+
+### Propagation delay
+
+The display polls config every 15 minutes, and the server caches brand config for 60 seconds. **A config change takes up to ~16 minutes to appear on a screen.** That is expected, not a fault. To see it immediately, force-reload that kiosk.
 
 ---
 
@@ -254,7 +413,8 @@ Every webhook hits the **lc_webhook_log** table for diagnostics. View in admin �
 | Update menu / sides / tips brand-wide | Admin → Menu / Sides / Tips → edit → Save Changes |
 | Hide stale orders past N min | Admin → Hold Times → `max_ticket_minutes` |
 | Mute audio at one store | Use the monitor's hardware volume buttons |
-| Reload all kiosks remotely | `for h in hollywood westwood ...; do ssh pi@line-coach-$h.local 'DISPLAY=:0 xdotool key F5'; done` |
+| Push a new deploy to the kiosks | Nothing — they self-update once the board is idle (see *How deploys reach the kiosks*) |
+| Force a reload now (can't wait) | `for h in hollywood westwood ...; do ssh pi@line-coach-$h.local 'DISPLAY=:0 xdotool key F5'; done` |
 | Check device health | Admin → Devices |
 | Inspect Toast webhook flow | Admin → Webhooks (filter by status) |
 | See bump times / volume | Admin → Analytics |

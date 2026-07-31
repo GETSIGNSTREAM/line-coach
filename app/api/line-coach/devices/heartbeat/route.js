@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { heartbeatDevice } from '@/lib/line-coach';
+import { requireDevice } from '@/lib/auth';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { RATE_LIMITS, getRateLimitKey } from '@/lib/config';
 
@@ -9,14 +10,22 @@ export async function POST(request) {
   const rlRes = rateLimitResponse(rl);
   if (rlRes) return rlRes;
 
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
-  }
+  const { error: authError, device } = await requireDevice(request);
+  if (authError) return authError;
 
-  const deviceId = typeof body.device_id === 'string' ? body.device_id.trim() : '';
+  // A paired device heartbeats as whoever its token says it is; the
+  // body id is only consulted on the legacy grace-period path, where
+  // the Pi kiosks still send a self-minted id.
+  let deviceId = device.legacy ? '' : device.device_id;
+  if (device.legacy) {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
+    deviceId = typeof body.device_id === 'string' ? body.device_id.trim() : '';
+  }
   if (!deviceId) {
     return NextResponse.json({ error: 'device_id is required' }, { status: 400 });
   }

@@ -249,15 +249,27 @@ export async function POST(request) {
   const toastSig = request.headers.get('toast-signature');
   const authHeader = request.headers.get('authorization');
 
+  // authMethod records WHICH check let the request through, so we can
+  // retire the unauthenticated User-Agent fallback below once the logs
+  // prove nothing depends on it. Deleting that branch blind would stop
+  // order ingest brand-wide if Toast is still using it.
   let authenticated = false;
+  let authMethod = null;
   if (toastSig && TOAST_WEBHOOK_SECRET) {
     authenticated = verifyToastHmac(rawBody, toastSig, TOAST_WEBHOOK_SECRET);
+    if (authenticated) authMethod = 'hmac';
   }
   if (!authenticated && authHeader?.startsWith('Bearer ')) {
     authenticated = authHeader.slice(7) === TOAST_WEBHOOK_SECRET;
+    if (authenticated) authMethod = 'bearer';
   }
+  // TODO(device-auth): remove once lc_webhook_log shows zero 'user_agent'
+  // rows across all six stores over a 48-72h window covering both
+  // order-placed and order-modified events. This accepts ANY request
+  // whose User-Agent contains the string, with no secret whatsoever.
   if (!authenticated && userAgent.includes('Apache-HttpClient')) {
     authenticated = true;
+    authMethod = 'user_agent';
   }
   if (!authenticated) {
     logWebhook({ status: 'unauthorized', http_status: 401, ip, duration_ms: Date.now() - start, error_message: 'Missing or invalid HMAC/bearer' });
@@ -278,7 +290,7 @@ export async function POST(request) {
     const storeId = resolveStoreId(restaurantGuid);
 
     if (!toastOrderGuid) {
-      logWebhook({ store_id: storeId, status: 'ignored', http_status: 200, ip, payload: body, duration_ms: Date.now() - start, error_message: 'no order guid' });
+      logWebhook({ store_id: storeId, status: 'ignored', http_status: 200, ip, payload: body, duration_ms: Date.now() - start, auth_method: authMethod, error_message: 'no order guid' });
       return NextResponse.json({ status: 'ignored', reason: 'no order guid' });
     }
 
@@ -308,6 +320,7 @@ export async function POST(request) {
           ip,
           payload: body,
           duration_ms: Date.now() - start,
+          auth_method: authMethod,
           error_message: 'outside service hours',
         });
         return NextResponse.json({ status: 'ok', reason: 'closed' });
@@ -353,7 +366,7 @@ export async function POST(request) {
       const eventType = allChecksClosedPastGrace && !isVoided && !isDeleted && !isCompleted && !allChecksKitchenDone
         ? 'bump_closed_grace'
         : 'bump';
-      logWebhook({ store_id: storeId, status: 'ok', http_status: 200, event_type: eventType, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start });
+      logWebhook({ store_id: storeId, status: 'ok', http_status: 200, event_type: eventType, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start, auth_method: authMethod });
       return NextResponse.json({ status: 'bumped' });
     }
 
@@ -516,7 +529,7 @@ export async function POST(request) {
     }
 
     if (mains.length === 0 && deduplicatedSides.length === 0) {
-      logWebhook({ store_id: storeId, status: 'ignored', http_status: 200, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start, error_message: 'no food items' });
+      logWebhook({ store_id: storeId, status: 'ignored', http_status: 200, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start, auth_method: authMethod, error_message: 'no food items' });
       return NextResponse.json({ status: 'ignored', reason: 'no food items' });
     }
 
@@ -560,7 +573,7 @@ export async function POST(request) {
     const { data, error, created } = await upsertOrderByToastId(toastOrderGuid, order);
     if (error) {
       console.error('Order save failed:', error.message);
-      logWebhook({ store_id: storeId, status: 'insert_error', http_status: 500, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start, error_message: error.message });
+      logWebhook({ store_id: storeId, status: 'insert_error', http_status: 500, toast_order_id: toastOrderGuid, ip, payload: body, duration_ms: Date.now() - start, auth_method: authMethod, error_message: error.message });
       return NextResponse.json({ error: 'Failed to process order' }, { status: 500 });
     }
 
@@ -576,11 +589,11 @@ export async function POST(request) {
       }
     }
 
-    logWebhook({ store_id: storeId, status: 'ok', http_status: 200, toast_order_id: toastOrderGuid, order_id: data.id, ip, payload: body, duration_ms: Date.now() - start });
+    logWebhook({ store_id: storeId, status: 'ok', http_status: 200, toast_order_id: toastOrderGuid, order_id: data.id, ip, payload: body, duration_ms: Date.now() - start, auth_method: authMethod });
     return NextResponse.json({ status: 'ok', orderId: data.id });
   } catch (err) {
     console.error('Webhook error:', err.message);
-    logWebhook({ status: 'parse_error', http_status: 400, ip, duration_ms: Date.now() - start, error_message: err.message });
+    logWebhook({ status: 'parse_error', http_status: 400, ip, duration_ms: Date.now() - start, auth_method: authMethod, error_message: err.message });
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 }

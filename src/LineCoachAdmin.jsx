@@ -1059,7 +1059,12 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     // Devices are per-store. Skip the fetch entirely when no store is
     // picked so the empty Devices tab doesn't show a stale list.
     if (storeId) {
-      fetch(`/api/line-coach/devices?store=${storeId}`)
+      // Listing devices is admin-only now — it returns every device id
+      // for a store, which is the list you'd want in order to
+      // impersonate one.
+      fetch(`/api/line-coach/devices?store=${storeId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
         .then((r) => r.json())
         .then((data) => setDevices(data.devices || []))
         .catch(console.error);
@@ -1069,20 +1074,78 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
   }, [token, storeId]);
 
   function refreshDevices() {
-    fetch(`/api/line-coach/devices?store=${storeId}`)
+    fetch(`/api/line-coach/devices?store=${storeId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then((r) => r.json())
       .then((data) => setDevices(data.devices || []))
       .catch(console.error);
   }
 
   async function removeDevice(deviceId) {
-    if (!confirm(`Remove device "${deviceId}"? It will re-register on next heartbeat if still online.`)) return;
+    if (!confirm(`Remove device "${deviceId}"?\n\nThis deletes the row and permanently kills its link — a paired screen will show "not paired" until you issue it a new one.`)) return;
     const res = await fetch(`/api/line-coach/devices?device_id=${encodeURIComponent(deviceId)}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.ok) refreshDevices();
     else alert('Failed to remove device');
+  }
+
+  // Kill switch. Unlike removeDevice this keeps the row (and its
+  // heartbeat history) so you can see what the screen was and un-revoke
+  // if it turns up.
+  async function setDeviceRevoked(deviceId, revoked) {
+    if (revoked) {
+      const reason = prompt(`Revoke "${deviceId}"?\n\nIts link stops working immediately (within ~30s of cache).\nOptional note — why?`, '');
+      if (reason === null) return;
+      const res = await fetch('/api/line-coach/devices', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ device_id: deviceId, revoked: true, reason }),
+      });
+      if (res.ok) refreshDevices();
+      else alert('Failed to revoke device');
+      return;
+    }
+    const res = await fetch('/api/line-coach/devices', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ device_id: deviceId, revoked: false }),
+    });
+    if (res.ok) refreshDevices();
+    else alert('Failed to restore device');
+  }
+
+  // Pair a new screen, or re-issue a link for an existing one. Re-issue
+  // supersedes whatever link was floating around before, which is the
+  // fix for "this iPad's URL ended up in a group chat".
+  async function pairDevice({ deviceId = null } = {}) {
+    if (!storeId) { alert('Pick a store first'); return; }
+    const station = deviceId
+      ? undefined
+      : (prompt('Station for this screen?\n\nBlank = full board. One or more of:\noven, grill, fryer, line, cold, hot_hold, grab\n(comma-separated, e.g. "grill,fryer" for expo)', '') ?? undefined);
+    if (station === undefined && !deviceId) return;
+    const res = await fetch('/api/line-coach/device-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ store_id: storeId, station: station || null, device_id: deviceId || undefined }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(`Failed to pair: ${err.error || res.status}`);
+      return;
+    }
+    const data = await res.json();
+    try {
+      await navigator.clipboard.writeText(data.url);
+      alert(`${data.reissued ? 'New link issued' : 'Screen paired'} — URL copied to clipboard.\n\nOpen it once on the target device.\n\n${data.url}`);
+    } catch {
+      // Clipboard needs a secure context / permission; show the URL so
+      // the admin can copy it by hand rather than losing it.
+      prompt('Copy this URL and open it once on the target device:', data.url);
+    }
+    refreshDevices();
   }
 
   const loadWebhookLogs = useCallback(async () => {
@@ -2292,6 +2355,11 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
     const SEVEN_DAYS = 7 * 24 * 3600_000;
     const visible = devices.filter((d) => {
       if (!hideOfflineDevices) return true;
+      // Revoked devices are exempt from the offline filter. You usually
+      // revoke a screen precisely BECAUSE it's gone, so it goes offline
+      // and would then hide itself — leaving no way to confirm the
+      // revoke landed, or to Restore it if the iPad turns up.
+      if (d.revoked_at) return true;
       return Date.now() - new Date(d.last_heartbeat).getTime() < SEVEN_DAYS;
     });
     return (
@@ -2302,14 +2370,33 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
             Hide devices offline &gt; 7 days
           </label>
           <span style={{ marginLeft: 'auto', color: `${BRAND.cream}80`, fontSize: '0.85rem' }}>{visible.length} of {devices.length}</span>
+          <button style={styles.btn} onClick={() => pairDevice()} disabled={!storeId}>+ Pair a screen</button>
           <button style={styles.btnSecondary} onClick={refreshDevices}>Refresh</button>
         </div>
+        {/* Unpaired rows are the six Pi kiosks that predate device auth.
+            They keep working only while LC_REQUIRE_DEVICE_AUTH is off —
+            once it flips, anything still showing "unpaired" goes dark. */}
+        {visible.some((d) => !d.token_issued_at) && (
+          <div style={{
+            marginBottom: '12px', padding: '10px 12px', borderRadius: '6px',
+            background: BRAND.charcoal, borderLeft: `4px solid ${BRAND.gold}`,
+            color: `${BRAND.cream}DD`, fontSize: '0.82rem',
+          }}>
+            <strong style={{ color: BRAND.gold }}>
+              {visible.filter((d) => !d.token_issued_at).length} screen(s) not yet paired.
+            </strong>{' '}
+            They still work today because device auth is in its grace period. Hit <strong>Pair</strong> on
+            each row and open the copied URL once on that screen, before enabling{' '}
+            <code>LC_REQUIRE_DEVICE_AUTH</code> — otherwise they will stop bumping.
+          </div>
+        )}
         <table style={styles.table}>
           <thead>
             <tr>
               <th style={styles.th}>Device ID</th>
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Type</th>
+              <th style={styles.th}>Station</th>
               <th style={styles.th}>Status</th>
               <th style={styles.th}>Last Heartbeat</th>
               <th style={styles.th}>Actions</th>
@@ -2317,7 +2404,7 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           </thead>
           <tbody>
             {visible.length === 0 && (
-              <tr><td colSpan={6} style={{ ...styles.td, textAlign: 'center', color: `${BRAND.cream}60` }}>
+              <tr><td colSpan={7} style={{ ...styles.td, textAlign: 'center', color: `${BRAND.cream}60` }}>
                 {devices.length === 0 ? 'No devices registered' : 'No devices match the filter'}
               </td></tr>
             )}
@@ -2326,21 +2413,44 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
               const ageMs = Date.now() - lastBeat.getTime();
               const isOnline = ageMs < 120_000;
               const isStale = ageMs > SEVEN_DAYS;
+              const isRevoked = Boolean(device.revoked_at);
+              const isPaired = Boolean(device.token_issued_at);
               return (
-                <tr key={device.device_id}>
+                <tr key={device.device_id} style={isRevoked ? { opacity: 0.55 } : undefined}>
                   <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: '0.8rem' }}>{device.device_id}</td>
                   <td style={styles.td}>{device.device_name || '—'}</td>
                   <td style={styles.td}>{device.device_type}</td>
+                  <td style={{ ...styles.td, fontSize: '0.8rem' }}>{device.station || <span style={{ color: `${BRAND.cream}60` }}>full board</span>}</td>
                   <td style={styles.td}>
-                    <span style={isOnline ? styles.deviceOnline : styles.deviceOffline}>
-                      {isOnline ? 'Online' : isStale ? 'Stale' : 'Offline'}
-                    </span>
+                    {isRevoked ? (
+                      <span style={{ ...styles.deviceOffline, background: `${BRAND.red}20`, color: BRAND.red }}
+                        title={device.revoked_reason || 'Revoked'}>
+                        Revoked
+                      </span>
+                    ) : (
+                      <span style={isOnline ? styles.deviceOnline : styles.deviceOffline}>
+                        {isOnline ? 'Online' : isStale ? 'Stale' : 'Offline'}
+                      </span>
+                    )}
+                    {!isPaired && !isRevoked && (
+                      <span style={{ marginLeft: '6px', color: BRAND.gold, fontSize: '0.7rem', letterSpacing: '0.5px' }}>
+                        UNPAIRED
+                      </span>
+                    )}
                   </td>
                   <td style={{ ...styles.td, fontSize: '0.85rem' }}>
                     {lastBeat.toLocaleString()}
                     <div style={{ color: `${BRAND.cream}60`, fontSize: '0.75rem' }}>{timeAgo(device.last_heartbeat)}</div>
                   </td>
-                  <td style={styles.td}>
+                  <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
+                    <button style={styles.btnSecondary} onClick={() => pairDevice({ deviceId: device.device_id })}>
+                      {isPaired ? 'Re-issue link' : 'Pair'}
+                    </button>
+                    {' '}
+                    <button style={styles.btnSecondary} onClick={() => setDeviceRevoked(device.device_id, !isRevoked)}>
+                      {isRevoked ? 'Restore' : 'Revoke'}
+                    </button>
+                    {' '}
                     <button style={styles.btnSecondary} onClick={() => removeDevice(device.device_id)}>Remove</button>
                   </td>
                 </tr>
@@ -2424,6 +2534,44 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
           <button style={styles.btnSecondary} onClick={loadWebhookLogs} disabled={webhookLoading}>{webhookLoading ? 'Loading...' : 'Refresh'}</button>
           <span style={{ marginLeft: 'auto', color: `${BRAND.cream}80`, fontSize: '0.85rem' }}>{webhookLogs.length} entries</span>
         </div>
+        {/* How Toast is actually authenticating. The webhook still accepts
+            any request whose User-Agent contains 'Apache-HttpClient' with
+            no secret at all — that branch has to go, but deleting it while
+            Toast depends on it would empty every board mid-service. This
+            panel is the go/no-go: once 'user_agent' reads 0 across all six
+            stores over a 48-72h window, the bypass can be removed. */}
+        {webhookLogs.length > 0 && (() => {
+          const counts = webhookLogs.reduce((acc, l) => {
+            const k = l.auth_method || 'none';
+            acc[k] = (acc[k] || 0) + 1;
+            return acc;
+          }, {});
+          const uaCount = counts.user_agent || 0;
+          return (
+            <div style={{
+              display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap',
+              marginBottom: '12px', padding: '10px 12px', borderRadius: '6px',
+              background: BRAND.charcoal,
+              borderLeft: `4px solid ${uaCount > 0 ? BRAND.red : BRAND.green}`,
+            }}>
+              <span style={{ color: BRAND.gold, fontFamily: "'Oswald', sans-serif", fontSize: '0.8rem', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+                Auth method
+              </span>
+              {['hmac', 'bearer', 'user_agent', 'none'].map((k) => (
+                <span key={k} style={{
+                  fontSize: '0.8rem',
+                  color: k === 'user_agent' && counts[k] ? BRAND.red : `${BRAND.cream}CC`,
+                  fontFamily: 'monospace',
+                }}>{k}: <strong>{counts[k] || 0}</strong></span>
+              ))}
+              <span style={{ marginLeft: 'auto', fontSize: '0.78rem', color: uaCount > 0 ? BRAND.red : BRAND.green }}>
+                {uaCount > 0
+                  ? `${uaCount} request${uaCount === 1 ? '' : 's'} authenticated by User-Agent alone — configure the Toast secret before removing the fallback`
+                  : 'No User-Agent-only auth in this window'}
+              </span>
+            </div>
+          );
+        })()}
         <table style={styles.table}>
           <thead>
             <tr>
@@ -2432,13 +2580,14 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
               <th style={styles.th}>Event</th>
               <th style={styles.th}>Store</th>
               <th style={styles.th}>Order #</th>
+              <th style={styles.th}>Auth</th>
               <th style={styles.th}>Duration</th>
               <th style={styles.th}>Error</th>
             </tr>
           </thead>
           <tbody>
             {webhookLogs.length === 0 && !webhookLoading && (
-              <tr><td colSpan={7} style={{ ...styles.td, textAlign: 'center', color: `${BRAND.cream}60` }}>No webhook activity in this window</td></tr>
+              <tr><td colSpan={8} style={{ ...styles.td, textAlign: 'center', color: `${BRAND.cream}60` }}>No webhook activity in this window</td></tr>
             )}
             {webhookLogs.map((log) => {
               const isOpen = expandedLog === log.id;
@@ -2465,12 +2614,28 @@ export default function LineCoachAdmin({ storeId: initialStoreId }) {
                     <td style={{ ...styles.td, fontSize: '0.8rem' }}>{log.event_type || '—'}</td>
                     <td style={{ ...styles.td, fontSize: '0.8rem' }}>{log.store_id || '—'}</td>
                     <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: '0.8rem' }}>{log.toast_order_id ? log.toast_order_id.slice(0, 8) + '…' : '—'}</td>
+                    <td style={{ ...styles.td, fontSize: '0.8rem' }}>
+                      {log.auth_method
+                        ? (
+                          <span style={{
+                            // Red for user_agent: that request carried no
+                            // secret at all and only got in on a header string.
+                            background: log.auth_method === 'user_agent' ? `${BRAND.red}20` : `${BRAND.cream}15`,
+                            color: log.auth_method === 'user_agent' ? BRAND.red : `${BRAND.cream}CC`,
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontSize: '0.72rem',
+                            fontFamily: 'monospace',
+                          }}>{log.auth_method}</span>
+                        )
+                        : '—'}
+                    </td>
                     <td style={{ ...styles.td, fontSize: '0.8rem' }}>{typeof log.duration_ms === 'number' ? `${log.duration_ms}ms` : '—'}</td>
                     <td style={{ ...styles.td, fontSize: '0.8rem', color: BRAND.red, maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.error_message || ''}</td>
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={7} style={{ ...styles.td, background: BRAND.charcoal, padding: '12px' }}>
+                      <td colSpan={8} style={{ ...styles.td, background: BRAND.charcoal, padding: '12px' }}>
                         <div style={{ color: `${BRAND.cream}80`, fontSize: '0.75rem', marginBottom: '6px' }}>IP: {log.ip || '—'} · Logged at {new Date(log.created_at).toISOString()}</div>
                         <pre style={{
                           background: BRAND.charcoalDark,

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { canonicalSideName, isCanonicalSide } from '@/lib/side-canonical';
+import useViewport from '@/src/useViewport';
 
 // Normalize a quality tip into { en, es }. Mirrors lib/line-coach.js so
 // the client doesn't pull in server-only deps. Accepts legacy string tips.
@@ -377,6 +378,14 @@ function FoodPhoto({ src, alt, style = {} }) {
           src={src}
           alt={alt}
           onError={() => setFailed(true)}
+          // iPadOS starts a native image drag on long-press, which fires
+          // pointercancel and kills an in-flight hold-to-bump. Suppressing
+          // the drag is what makes the 800ms hold survive on a tablet.
+          draggable={false}
+          // iOS also pops a "Save Image / Copy" callout on long-press over
+          // an <img>; userSelect:none does not suppress it. The rule lives
+          // in app/layout.js because React drops the inline form.
+          className="lc-no-callout"
           style={{
             width: '100%',
             height: '100%',
@@ -669,6 +678,11 @@ export default function LineCoachDisplay({ storeId }) {
   const HOLD_DURATION_MS = 800;
   const UNDO_WINDOW_MS = 5000;
 
+  // Layout facts that CSS can't express — how many cards actually fit,
+  // and how hard to shrink the fixed card chrome. Everything expressible
+  // as CSS lives in the stylesheet in app/layout.js instead.
+  const { chromeScale } = useViewport();
+
   // Detect touch capability + URL override. ?touch=1 forces on, ?touch=0
   // forces off, anything else auto-detects. Set in an effect (post-mount)
   // so the SSR pass and first client render see the same value (false)
@@ -684,6 +698,53 @@ export default function LineCoachDisplay({ storeId }) {
       'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0
     );
   }, []);
+
+  // ── Device pairing token ──────────────────────────────
+  // Minted by an admin (POST /api/line-coach/device-token) and handed
+  // to a screen as ?dt=<jwt>. Persisted to localStorage on first load
+  // so a launch WITHOUT the query string stays paired — that's the case
+  // when a manager adds the page to their iPad home screen, since iOS
+  // resolves the manifest's start_url and drops the query string. The
+  // Pi kiosks relaunch from a fixed URL that still carries ?dt=, so
+  // they never depend on the fallback.
+  //
+  // Same post-mount pattern as touch/language above: SSR and first
+  // client render both see null, so no hydration mismatch.
+  const [deviceToken, setDeviceToken] = useState(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let tok = null;
+    try {
+      tok = new URLSearchParams(window.location.search).get('dt');
+    } catch { /* malformed query — fall through to storage */ }
+    if (tok) {
+      try { window.localStorage.setItem('lc-device-token', tok); } catch { /* private mode */ }
+    } else {
+      try { tok = window.localStorage.getItem('lc-device-token'); } catch { /* private mode */ }
+    }
+    setDeviceToken(tok || null);
+  }, []);
+
+  // Set when a write comes back 401 — the screen is unpaired, revoked,
+  // or superseded by a re-issued link. Surfaced as a persistent banner:
+  // a KDS that silently stops bumping is worse than one that says why.
+  const [pairingError, setPairingError] = useState(null);
+
+  // Every mutating call goes through this so the token is attached in
+  // exactly one place. Reads (orders, config) stay unauthenticated.
+  const authFetch = useCallback(async (url, opts = {}) => {
+    const headers = { ...(opts.headers || {}) };
+    if (deviceToken) headers.Authorization = `Bearer ${deviceToken}`;
+    const res = await fetch(url, { ...opts, headers });
+    if (res.status === 401) {
+      let reason = null;
+      try { reason = (await res.clone().json())?.reason || null; } catch { /* non-JSON body */ }
+      setPairingError(reason || 'unauthorized');
+    } else if (res.ok) {
+      setPairingError(null);
+    }
+    return res;
+  }, [deviceToken]);
 
   // Language toggle (EN | ES). Resolution priority — first hit wins:
   //   1. ?lang=en|es URL param (session override)
@@ -794,7 +855,7 @@ export default function LineCoachDisplay({ storeId }) {
     });
     let deviceId = null;
     try { deviceId = window.localStorage.getItem(`lc-device-id-${storeId}`); } catch { /* ignore */ }
-    fetch('/api/line-coach/checklist-runs', {
+    authFetch('/api/line-coach/checklist-runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ store_id: storeId, checklist_id: checklistId, item_id: itemId, checked, device_id: deviceId }),
@@ -804,7 +865,7 @@ export default function LineCoachDisplay({ storeId }) {
   }, [storeId, fetchChecklists]);
 
   const completeChecklist = useCallback(async (checklistId, initials) => {
-    const res = await fetch('/api/line-coach/checklist-runs/complete', {
+    const res = await authFetch('/api/line-coach/checklist-runs/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ store_id: storeId, checklist_id: checklistId, initials }),
@@ -869,7 +930,7 @@ export default function LineCoachDisplay({ storeId }) {
     let deviceId = null;
     try { deviceId = window.localStorage.getItem(`lc-device-id-${storeId}`); } catch { /* ignore */ }
     try {
-      await fetch('/api/line-coach/bird-log', {
+      await authFetch('/api/line-coach/bird-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ store_id: storeId, device_id: deviceId, ...payload }),
@@ -926,6 +987,39 @@ export default function LineCoachDisplay({ storeId }) {
   ) : null;
   const birdBanner = (
     <BirdAlertBanner pullDue={birdPullDue} shredDue={birdShredDue} language={language} onOpen={openBirdLog} />
+  );
+
+  // Unpaired / revoked screen. The board keeps rendering orders (reads
+  // are open) but nothing it does will stick, so say so loudly rather
+  // than let a cook hold a card over and over wondering why it won't
+  // clear. Bilingual because the line is Spanish-first.
+  const pairingBanner = pairingError ? (
+    <PairingBanner reason={pairingError} language={language} />
+  ) : null;
+
+  // Portrait on a tablet. The board needs horizontal room — the sides
+  // rail plus ~400px of fixed card chrome doesn't survive a 768px
+  // column, and dropping the rail loses one of the display's better
+  // features. iOS ignores the manifest's orientation lock, so a
+  // rotate prompt is the honest option rather than shipping a cramped
+  // portrait layout and pretending it's fine. Purely CSS-driven
+  // (see .lc-rotate-prompt) so it costs nothing in landscape.
+  const rotatePrompt = (
+    <div className="lc-rotate-prompt" aria-live="polite">
+      <div style={{ fontSize: '3rem' }}>⟲</div>
+      <div style={{
+        fontFamily: "'Oswald', sans-serif", fontWeight: 700,
+        fontSize: '1.4rem', letterSpacing: '2px', textTransform: 'uppercase',
+        color: BRAND.gold,
+      }}>
+        {language === 'es' ? 'Gira la pantalla' : 'Rotate this screen'}
+      </div>
+      <div style={{ color: `${BRAND.cream}CC`, fontSize: '1rem', maxWidth: '340px' }}>
+        {language === 'es'
+          ? 'Line Coach necesita orientación horizontal para mostrar el tablero completo.'
+          : 'Line Coach needs landscape orientation to show the full board.'}
+      </div>
+    </div>
   );
 
   // ── Recipe reference ──────────────────────────────────
@@ -1121,32 +1215,47 @@ export default function LineCoachDisplay({ storeId }) {
   }, [config]);
 
   useEffect(() => {
-    const storageKey = `lc-device-id-${storeId}`;
+    // Paired screens identify themselves by token — the server reads
+    // the device id off the JWT, so nothing device-specific goes in the
+    // body. Unpaired screens fall back to the legacy self-minted id,
+    // which is what keeps the six live Pi kiosks heartbeating until
+    // they're re-paired. That branch retires with the grace period.
     let deviceId = null;
-    try {
-      deviceId = localStorage.getItem(storageKey);
-    } catch { /* private mode / SSR */ }
-    if (!deviceId) {
-      deviceId = `display-${storeId}-${Math.random().toString(36).slice(2, 10)}`;
-      try { localStorage.setItem(storageKey, deviceId); } catch { /* ignore */ }
+    if (!deviceToken) {
+      const storageKey = `lc-device-id-${storeId}`;
+      try {
+        deviceId = localStorage.getItem(storageKey);
+      } catch { /* private mode / SSR */ }
+      if (!deviceId) {
+        deviceId = `display-${storeId}-${Math.random().toString(36).slice(2, 10)}`;
+        try { localStorage.setItem(storageKey, deviceId); } catch { /* ignore */ }
+      }
     }
 
     let cancelled = false;
+    const body = deviceToken
+      ? { store_id: storeId, device_type: 'kds' }
+      : { device_id: deviceId, store_id: storeId, device_type: 'kds' };
+
     const register = () =>
-      fetch('/api/line-coach/devices', {
+      authFetch('/api/line-coach/devices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device_id: deviceId, store_id: storeId, device_type: 'kds' }),
+        body: JSON.stringify(body),
       }).catch(() => {});
 
     const heartbeat = async () => {
       if (cancelled) return;
       try {
-        const res = await fetch('/api/line-coach/devices/heartbeat', {
+        const res = await authFetch('/api/line-coach/devices/heartbeat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_id: deviceId }),
+          body: JSON.stringify(deviceToken ? {} : { device_id: deviceId }),
         });
+        // 404 means the row is gone (admin removed it, or this screen
+        // has never registered). Re-register and let the next tick
+        // confirm — except when revoked, where re-registering would
+        // just 401 again.
         if (res.status === 404) await register();
       } catch { /* network blip — next tick will retry */ }
     };
@@ -1154,7 +1263,7 @@ export default function LineCoachDisplay({ storeId }) {
     register().then(heartbeat);
     const interval = setInterval(heartbeat, 60_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [storeId]);
+  }, [storeId, deviceToken, authFetch]);
 
   // ── Audio alerts ────────────────────────────────────
 
@@ -1478,7 +1587,7 @@ export default function LineCoachDisplay({ storeId }) {
       expiresAt: Date.now() + UNDO_WINDOW_MS,
     });
     try {
-      const res = await fetch('/api/line-coach/bump', {
+      const res = await authFetch('/api/line-coach/bump', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId }),
@@ -1515,7 +1624,7 @@ export default function LineCoachDisplay({ storeId }) {
     setBumpedToast(null);
     optimisticallyBumpedRef.current.delete(t.orderId);
     try {
-      await fetch('/api/line-coach/unbump', {
+      await authFetch('/api/line-coach/unbump', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: t.orderId }),
@@ -1594,6 +1703,86 @@ export default function LineCoachDisplay({ storeId }) {
     const t = setTimeout(() => setSlowConfirmed(true), 8000);
     return () => clearTimeout(t);
   }, [boardEmpty]);
+
+  // ── Self-update ───────────────────────────────────────
+  //
+  // The Pi kiosks launch Chromium once at boot against a fixed URL and
+  // never reload — the watchdog only relaunches on process death. So a
+  // deploy reached a kiosk only when a human SSHed in and pressed F5,
+  // which meant screens quietly ran weeks-old code (this is how the
+  // LEARN/RECIPES pills went missing in production).
+  //
+  // Poll the build id; when it changes, reload — but ONLY when the board
+  // is genuinely idle. The gate below is the whole point of this
+  // feature: a reload during service would drop tickets off the screen
+  // mid-cook, which is far worse than running slightly stale code.
+  //
+  // Every store closes, so boardEmpty is continuously true overnight —
+  // a deploy lands that night at the latest, sooner if the kitchen goes
+  // quiet. The guarantee is "by the next quiet moment", not "instantly".
+  const loadedVersionRef = useRef(null);
+  const [updatePending, setUpdatePending] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch('/api/line-coach/version', { cache: 'no-store' });
+        if (!res.ok) return;
+        const { version } = await res.json();
+        if (cancelled || !version) return;
+        if (loadedVersionRef.current === null) {
+          // First read defines "the build this page is running".
+          loadedVersionRef.current = version;
+          return;
+        }
+        if (version !== loadedVersionRef.current) setUpdatePending(true);
+      } catch {
+        // Network blip or a 500 from the endpoint: do nothing. Never
+        // reload on error — an outage must not turn into every kiosk in
+        // the brand reloading in a loop.
+      }
+    };
+    check();
+    const interval = setInterval(check, 5 * 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  useEffect(() => {
+    if (!updatePending) return undefined;
+
+    // Idle gate. Every one of these already exists for other reasons;
+    // this reuses them rather than tracking new state.
+    const safe =
+      boardEmpty                                    // no tickets up
+      && slowConfirmed                              // and empty for a beat, not a gap between orders
+      && !checklistOpen && !birdOverlayOpen         // not mid checklist sign-off / bird log entry
+      && !recipesOpen && !detailOrder
+      && optimisticallyBumpedRef.current.size === 0 // no bump still in flight
+      && !bumpedToast                               // no live undo window to strand
+      && !holdProgress;                             // not under a cook's finger
+
+    if (!safe) return undefined;
+
+    // Loop guard. If the version endpoint ever became non-deterministic,
+    // an unguarded reload would put every kiosk into a boot loop. Refuse
+    // to reload twice inside two minutes.
+    const GUARD_MS = 2 * 60_000;
+    try {
+      const last = Number(window.sessionStorage.getItem('lc-reload-at') || 0);
+      if (last && Date.now() - last < GUARD_MS) return undefined;
+      window.sessionStorage.setItem('lc-reload-at', String(Date.now()));
+    } catch { /* private mode — proceed without the guard */ }
+
+    // Small delay so this never fires in the same tick as a state change
+    // that might be about to make the board busy again.
+    const t = setTimeout(() => window.location.reload(), 1500);
+    return () => clearTimeout(t);
+  }, [
+    updatePending, boardEmpty, slowConfirmed,
+    checklistOpen, birdOverlayOpen, recipesOpen, detailOrder,
+    bumpedToast, holdProgress,
+  ]);
 
   // Side Batching: aggregate sides across all active orders.
   //
@@ -1918,18 +2107,20 @@ export default function LineCoachDisplay({ storeId }) {
     const avgLabel = language === 'es' ? 'prom' : 'avg';
     const onTimeLabel = language === 'es' ? 'a tiempo' : 'on time';
     return (
-      <div style={s.container}>
+      <div className="lc-fill" style={s.container}>
         <style>{`
           @keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
           @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
         `}</style>
         <Header now={now} orderCount={0} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
+        {pairingBanner}
+      {rotatePrompt}
         {birdBanner}
         {checklistNudge}
         {checklistOverlay}
         {birdOverlay}
         {recipeOverlay}
-        <div style={s.qualityCoach}>
+        <div className="lc-fill" style={s.qualityCoach}>
           <div style={{ ...s.qualityLabel, ...(isFeedbackTip ? { color: BRAND.terracotta } : {}) }}>{tipLabel}</div>
           <div style={s.qualityTipBlock} key={`${qualityTipIndex}-${language}`}>
             {text && (
@@ -2070,7 +2261,7 @@ export default function LineCoachDisplay({ storeId }) {
     const sourceLabel = order.priority === 'rush' ? 'ASAP' : (diningLabel ? diningLabel.toUpperCase() : null);
 
     return (
-      <div style={s.container}>
+      <div className="lc-fill" style={s.container}>
         <style>{`
           @keyframes lcAllergyPulse {
             0%, 100% { box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.85); }
@@ -2086,18 +2277,23 @@ export default function LineCoachDisplay({ storeId }) {
           }
         `}</style>
         <Header now={now} orderCount={1} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
+        {pairingBanner}
+      {rotatePrompt}
         {birdBanner}
         {checklistOverlay}
         {birdOverlay}
         {recipeOverlay}
 
         <div
+          className="lc-no-callout"
           {...focusOrderHandlers}
           style={{
             position: 'relative',
             userSelect: 'none',
             WebkitUserSelect: 'none',
-            touchAction: touchEnabled ? 'none' : 'auto',
+            // See the card comment below — 'pan-y' keeps a scroll gesture
+            // from being read as a hold-to-bump.
+            touchAction: touchEnabled ? 'pan-y' : 'auto',
             transform: focusIsHolding ? 'scale(0.99)' : 'scale(1)',
             transition: focusIsHolding ? 'none' : 'transform 120ms ease-out',
           }}>
@@ -2239,11 +2435,11 @@ export default function LineCoachDisplay({ storeId }) {
         {/* Two-column body: photo + coach tip ─────────── */}
         {/* `key` includes the rotating item index so each rotation
             re-mounts the block and triggers the fade-in animation. */}
-        <div key={`focus-${focusItemIndex % itemCount}-${language}-${learnModeOn ? 'learn' : 'coach'}`} style={{
+        <div key={`focus-${focusItemIndex % itemCount}-${language}-${learnModeOn ? 'learn' : 'coach'}`} className="lc-fill" style={{
           display: 'flex',
           gap: '24px',
           padding: '16px',
-          minHeight: 'calc(100vh - 200px)',
+          '--lc-offset': '200px',
           animation: 'lcFocusFade 420ms cubic-bezier(0.2, 0.8, 0.2, 1)',
         }}>
           {/* Left: photo + entree name + sides + modifiers */}
@@ -2257,10 +2453,11 @@ export default function LineCoachDisplay({ storeId }) {
             <FoodPhoto
               src={getSideImageUrl(primaryItem?.name || '', menuItems, configSides)}
               alt={primaryItem?.name || ''}
+              className="lc-svh"
               style={{
                 width: '100%',
                 aspectRatio: '4 / 3',
-                maxHeight: '46vh',
+                '--lc-vh': 46,
                 borderRadius: '12px',
               }}
             />
@@ -2450,7 +2647,7 @@ export default function LineCoachDisplay({ storeId }) {
   }
 
   return (
-    <div style={s.container}>
+    <div className="lc-fill" style={s.container}>
       <style>{`
         @keyframes lcAllergyPulse {
           0%, 100% { box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.85); }
@@ -2497,6 +2694,8 @@ export default function LineCoachDisplay({ storeId }) {
         }
       `}</style>
       <Header now={now} orderCount={visibleOrders.length} staleCount={staleCount} language={language} onLanguageToggle={toggleLanguage} learnAllowed={learnModeAllowed} learnMode={learnMode} onLearnToggle={toggleLearnMode} {...checklistHeaderProps} {...birdHeaderProps} {...recipeHeaderProps} />
+      {pairingBanner}
+      {rotatePrompt}
       {birdBanner}
       {checklistOverlay}
       {birdOverlay}
@@ -2516,10 +2715,10 @@ export default function LineCoachDisplay({ storeId }) {
         />
       )}
 
-      <div style={s.mainGrid}>
+      <div className="lc-main">
         {/* Left Column: Fire Order — grouped by order */}
         <div style={s.leftCol}>
-          <div style={s.sidesContainer}>
+          <div style={s.orderListContainer}>
             {orderSequence.length === 0 && (
               <div style={{ ...s.emptyState, fontSize: '1.5rem' }}>Clear</div>
             )}
@@ -2537,6 +2736,14 @@ export default function LineCoachDisplay({ storeId }) {
               // Touch-era cap: rush max went 8 → 6 because 22" wall-mount
               // taps need ≥60px targets (was 48px). Better to scroll past
               // 6 than to mis-tap the wrong card with greasy hands.
+              //
+              // Deliberately still a fixed count, not a fitted one. Card
+              // height varies with how many entrees an order has, so any
+              // static "rows that fit" estimate is right only for
+              // single-item orders and over-counts for everything else —
+              // it never actually reduced the cap at any supported
+              // viewport. Overflow is handled honestly by scrolling
+              // (orderListContainer) instead of predicted badly here.
               const MAX_VISIBLE = isComfortable ? 3 : 5;
               const visibleOrders = orderSequence.slice(0, MAX_VISIBLE);
               const hiddenCount = orderSequence.length - MAX_VISIBLE;
@@ -2548,13 +2755,21 @@ export default function LineCoachDisplay({ storeId }) {
               // the display matters most and cooks are furthest from
               // it. Comfortable mode lifted proportionally so the two
               // tiers still feel related.
+              // px() shrinks the FIXED chrome as the column narrows. The
+              // sidebar, photo and side rail together consume ~400px
+              // before any text renders; on a 1024px iPad that leaves
+              // ~300px for an entree name and "Boneless Breast Market
+              // Plate" wraps to three lines. Text sizes are left alone —
+              // they're clamp()-based or deliberately large for distance
+              // reading, and shrinking them is the opposite of the point.
+              const px = (n) => `${Math.round(n * chromeScale)}px`;
               const rowPad = isComfortable ? '14px 0' : '10px 0';
-              const sidebarW = isComfortable ? '130px' : '116px';
+              const sidebarW = px(isComfortable ? 130 : 116);
               const orderNumSize = isComfortable ? '1.7rem' : '1.5rem';
               const customerSize = isComfortable ? '1.1rem' : '0.95rem';
               const badgeSize = isComfortable ? '1rem' : '0.85rem';
               const timerSize = isComfortable ? '2rem' : '1.7rem';
-              const photoSize = isComfortable ? '200px' : '140px';
+              const photoSize = px(isComfortable ? 200 : 140);
               const entreeNameSize = isComfortable ? '2.55rem' : '1.95rem';
               // Modifier + sides line are now BIGGER than the entree
               // name in rush mode and matched-or-larger in comfortable.
@@ -2595,7 +2810,7 @@ export default function LineCoachDisplay({ storeId }) {
                       : unattachedSides;
                     const looseAllAlaCarte = looseSides.length > 0 && looseSides.every((side) => side && side.alaCarte);
                     const cardHasSides = itemsCarrySides || soloExtraSides.length > 0 || looseSides.length > 0;
-                    const railW = isComfortable ? 140 : 120;
+                    const railW = Math.round((isComfortable ? 140 : 120) * chromeScale);
                     // x-offset of the text column, for order-level rows
                     // (loose sides, notes) to align with the copy above.
                     const textIndent = `${parseInt(photoSize, 10) + 12 + (cardHasSides ? railW + 12 : 0)}px`;
@@ -2651,6 +2866,7 @@ export default function LineCoachDisplay({ storeId }) {
                     return (
                       <div key={order.id || oi}
                         data-fresh={freshOrderIdsRef.current.has(order.id) ? '1' : undefined}
+                        className="lc-no-callout"
                         {...orderHandlers}
                         style={{
                           marginTop: oi > 0 ? '8px' : 0,
@@ -2658,7 +2874,14 @@ export default function LineCoachDisplay({ storeId }) {
                           position: 'relative',
                           userSelect: 'none',
                           WebkitUserSelect: 'none',
-                          touchAction: touchEnabled ? 'none' : 'auto',
+                          // 'pan-y', not 'none': the board can overflow on a
+                          // short tablet viewport, and 'none' would swallow
+                          // the scroll and run the hold timer to completion —
+                          // a swipe would bump the order. With 'pan-y' the
+                          // browser claims a vertical drag as a scroll and
+                          // fires pointercancel, which the onPointerCancel
+                          // handler above already routes to cancelHold.
+                          touchAction: touchEnabled ? 'pan-y' : 'auto',
                           background: isHolding
                             ? `linear-gradient(90deg, ${BRAND.green}40 ${holdPct * 100}%, ${BRAND.charcoal} ${holdPct * 100}%)`
                             : BRAND.charcoal,
@@ -3355,12 +3578,13 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="lc-sheet"
         style={{
           background: BRAND.charcoal,
           borderRadius: '14px',
           maxWidth: '900px',
           width: '100%',
-          maxHeight: '90vh',
+          '--lc-vh': 90,
           overflowY: 'auto',
           padding: '28px 32px',
           boxShadow: `0 24px 48px rgba(0,0,0,0.45), inset 4px 0 0 ${sevColor}`,
@@ -3664,6 +3888,47 @@ function OrderDetailSheet({ order, menuItems, configSides, warningMin, dangerMin
 // Attention banner: red pulsing when a batch hit cook time (pull it
 // before it dries out), gold when warmer batches are past the carve
 // window (shred, don't carve). Renders nothing when all is well.
+// Shown when a write comes back 401. Reads stay open, so the board
+// still looks alive — which is exactly the trap: without this a cook
+// holds a card, sees the progress fill, and watches the ticket stay put
+// with no explanation. Not a button: there is nothing the line can do
+// about it, so it points at the one person who can.
+function PairingBanner({ reason, language }) {
+  const es = language === 'es';
+  const detail = {
+    revoked: es ? 'Esta pantalla fue desconectada.' : 'This screen was revoked.',
+    superseded: es ? 'Se generó un enlace nuevo para esta pantalla.' : 'A newer link was issued for this screen.',
+    unknown_device: es ? 'Esta pantalla ya no está registrada.' : 'This screen is no longer registered.',
+    no_device_token: es ? 'Esta pantalla no está vinculada.' : 'This screen is not paired.',
+  }[reason] || (es ? 'Esta pantalla no está vinculada.' : 'This screen is not paired.');
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 16px 0' }}>
+      <div
+        role="status"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '12px',
+          padding: '12px 26px',
+          borderRadius: '999px',
+          background: BRAND.red,
+          border: `1px solid ${BRAND.red}`,
+          color: BRAND.white,
+          fontFamily: "'Oswald', sans-serif",
+          fontWeight: 700,
+          fontSize: 'clamp(0.95rem, 1.4vw, 1.4rem)',
+          letterSpacing: '2px',
+          textTransform: 'uppercase',
+          minHeight: '44px',
+          textAlign: 'center',
+        }}
+      >
+        {detail} {es ? 'Pide un enlace nuevo al admin.' : 'Ask your admin for a new link.'}
+      </div>
+    </div>
+  );
+}
+
 function BirdAlertBanner({ pullDue, shredDue, language, onOpen }) {
   if (pullDue.length === 0 && shredDue.length === 0) return null;
   const es = language === 'es';
@@ -3808,9 +4073,9 @@ function BirdLogOverlay({ batches, cookMin, windowMin, now, language, onClose, o
       <div
         onClick={(e) => e.stopPropagation()}
         onPointerDown={() => setLastTouch(Date.now())}
+        className="lc-sheet"
         style={{
           width: 'min(940px, 94vw)',
-          maxHeight: '88vh',
           overflowY: 'auto',
           background: BRAND.charcoalDark,
           border: `2px solid ${BRAND.gold}`,
@@ -4493,9 +4758,9 @@ function ChecklistOverlay({ checklists, language, onClose, onToggle, onComplete 
       <div
         onClick={(e) => e.stopPropagation()}
         onPointerDown={() => setLastTouch(Date.now())}
+        className="lc-sheet"
         style={{
           width: 'min(940px, 94vw)',
-          maxHeight: '88vh',
           overflowY: 'auto',
           background: BRAND.charcoalDark,
           border: `2px solid ${BRAND.gold}`,
@@ -4687,9 +4952,10 @@ function RecipeOverlay({ recipes, language, menuItems, configSides, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         onPointerDown={() => setLastTouch(Date.now())}
+        className="lc-sheet"
         style={{
           width: 'min(1100px, 96vw)',
-          maxHeight: '90vh',
+          '--lc-vh': 90,
           overflowY: 'auto',
           background: BRAND.charcoalDark,
           border: `2px solid ${BRAND.gold}`,
@@ -4775,7 +5041,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
       // Whole surface is the tap target — a trainee shouldn't have to
       // find a small button from across the line. Plain onClick, never
       // the hold-to-bump pointer machine (that's for order cards).
-      <div style={{ ...s.qualityCoach, cursor: 'pointer' }} onClick={() => setSession({ view: 'picker' })}>
+      <div className="lc-fill" style={{ ...s.qualityCoach, cursor: 'pointer' }} onClick={() => setSession({ view: 'picker' })}>
         <div style={{ ...s.qualityLabel, color: BRAND.blue }}>
           {es ? 'MODO APRENDIZAJE' : 'LEARN MODE'}
         </div>
@@ -4805,11 +5071,11 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
               maxWidth: '30vh',
             }}>{learnItem.name}</div>
           </div>
-          <div style={{
+          <div className="lc-svh" style={{
             display: 'flex',
             flexDirection: 'column',
             gap: manySteps ? '10px' : '16px',
-            maxHeight: '56vh',
+            '--lc-vh': 56,
             overflowY: 'auto',
             minWidth: 0,
           }}>
@@ -4869,16 +5135,16 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
     );
   } else if (view === 'picker') {
     body = (
-      <div style={s.qualityCoach}>
+      <div className="lc-fill" style={s.qualityCoach}>
         <div style={{ ...s.qualityLabel, color: BRAND.blue }}>
           {es ? 'ELIGE UN PLATILLO PARA PRACTICAR' : 'CHOOSE A DISH TO PRACTICE'}
         </div>
-        <div style={{
+        <div className="lc-sheet" style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
           gap: '20px',
           width: 'min(90vw, 1400px)',
-          maxHeight: '68vh',
+          '--lc-vh': 68,
           overflowY: 'auto',
           animation: 'lcQualityFade 400ms ease-out',
         }}>
@@ -4950,7 +5216,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
     const goBack = () => setSession((prev) => ({ ...prev, stepIndex: Math.max(0, prev.stepIndex - 1) }));
 
     body = (
-      <div style={{ ...s.qualityCoach, justifyContent: 'flex-start' }}>
+      <div className="lc-fill" style={{ ...s.qualityCoach, justifyContent: 'flex-start' }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -5110,7 +5376,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
   }
 
   return (
-    <div style={s.container}>
+    <div className="lc-fill" style={s.container}>
       <style>{`
         @keyframes lcQualityFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes lcLearnPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
@@ -5125,7 +5391,7 @@ function LearnModeScreen({ learnItems, rotationIndex, language, menuItems, confi
 
 function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, learnAllowed = false, learnMode = false, onLearnToggle, checklistAvailable = false, checklistDue = 0, onChecklistOpen, birdAvailable = false, birdCookingQty = 0, birdHoldingQty = 0, birdAlert = 0, onBirdOpen, recipesAvailable = false, onRecipesOpen }) {
   return (
-    <div style={s.header}>
+    <div className="lc-header" style={s.header}>
       <div style={s.headerLeft}>
         {/* Brand logo replaces the wordmark. Sized by height so the
             ~4.18:1 logo image scales cleanly. onError falls back to
@@ -5133,6 +5399,8 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, l
         <img
           src="/WILDBIRD-LOGO-WHITE.png"
           alt="WILDBIRD"
+          draggable={false}
+          className="lc-no-callout"
           style={{ height: '44px', width: 'auto', display: 'block' }}
           onError={(e) => {
             e.currentTarget.style.display = 'none';
@@ -5164,7 +5432,7 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, l
           </span>
         )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div className="lc-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {learnAllowed && onLearnToggle && (
           // Learn-mode chip (new-hire build-step walkthroughs). Only
           // rendered when the store's master switch is on. Active state
@@ -5368,7 +5636,7 @@ function Header({ now, orderCount, staleCount = 0, language, onLanguageToggle, l
 
 const s = {
   container: {
-    minHeight: '100vh',
+    '--lc-offset': '0px',
     background: BRAND.charcoal,
     color: BRAND.bone,
     fontFamily: "'Open Sans', 'Helvetica Neue', sans-serif",
@@ -5410,16 +5678,33 @@ const s = {
     fontVariantNumeric: 'tabular-nums',
     fontFamily: "'Open Sans', sans-serif",
   },
-  // Main Layout
-  mainGrid: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 320px',
-    gap: '8px',
-    padding: '8px',
-    height: 'calc(100vh - 56px)',
-    overflow: 'hidden',
-  },
+  // Main Layout lives in the `.lc-main` rule in app/layout.js — it needs
+  // @media breakpoints for the sides rail and a two-declaration dvh
+  // fallback, neither of which an inline style object can express.
   leftCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  // Order list. Same flex shape as sidesContainer but scrollable, and
+  // deliberately NOT shared with it — the sides rail sizes itself to fit
+  // (vh-based thumbnails that shrink with count), whereas this list can
+  // genuinely overflow.
+  //
+  // MAX_VISIBLE caps the card *count*, not the total height, so on a
+  // shorter tablet viewport the rows still overrun the column. With
+  // overflow:hidden they were clipped with no scroll affordance and no
+  // indication — the "+N hidden" chip only counts orders past
+  // MAX_VISIBLE, not ones cut off by height. Measured on a 1180x820
+  // iPad: 2097px of content in a 764px column, so ~1300px unreachable.
+  // The MAX_VISIBLE comment above ("better to scroll past 6") always
+  // assumed this was scrollable.
+  orderListContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    WebkitOverflowScrolling: 'touch',
+    overscrollBehavior: 'contain',
+  },
   rightCol: { display: 'flex', flexDirection: 'column', overflow: 'hidden', background: BRAND.charcoalDark, borderRadius: '8px', padding: '0 4px' },
   emptyState: {
     textAlign: 'center',
@@ -5484,7 +5769,7 @@ const s = {
   // Quality Coach — fills the screen below the header so tips are
   // readable from anywhere on the line. EN stacked on top of ES.
   qualityCoach: {
-    minHeight: 'calc(100vh - 60px)',
+    '--lc-offset': '60px',
     padding: '4vh 6vw',
     display: 'flex',
     flexDirection: 'column',
