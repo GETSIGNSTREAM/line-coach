@@ -1704,6 +1704,86 @@ export default function LineCoachDisplay({ storeId }) {
     return () => clearTimeout(t);
   }, [boardEmpty]);
 
+  // ── Self-update ───────────────────────────────────────
+  //
+  // The Pi kiosks launch Chromium once at boot against a fixed URL and
+  // never reload — the watchdog only relaunches on process death. So a
+  // deploy reached a kiosk only when a human SSHed in and pressed F5,
+  // which meant screens quietly ran weeks-old code (this is how the
+  // LEARN/RECIPES pills went missing in production).
+  //
+  // Poll the build id; when it changes, reload — but ONLY when the board
+  // is genuinely idle. The gate below is the whole point of this
+  // feature: a reload during service would drop tickets off the screen
+  // mid-cook, which is far worse than running slightly stale code.
+  //
+  // Every store closes, so boardEmpty is continuously true overnight —
+  // a deploy lands that night at the latest, sooner if the kitchen goes
+  // quiet. The guarantee is "by the next quiet moment", not "instantly".
+  const loadedVersionRef = useRef(null);
+  const [updatePending, setUpdatePending] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch('/api/line-coach/version', { cache: 'no-store' });
+        if (!res.ok) return;
+        const { version } = await res.json();
+        if (cancelled || !version) return;
+        if (loadedVersionRef.current === null) {
+          // First read defines "the build this page is running".
+          loadedVersionRef.current = version;
+          return;
+        }
+        if (version !== loadedVersionRef.current) setUpdatePending(true);
+      } catch {
+        // Network blip or a 500 from the endpoint: do nothing. Never
+        // reload on error — an outage must not turn into every kiosk in
+        // the brand reloading in a loop.
+      }
+    };
+    check();
+    const interval = setInterval(check, 5 * 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  useEffect(() => {
+    if (!updatePending) return undefined;
+
+    // Idle gate. Every one of these already exists for other reasons;
+    // this reuses them rather than tracking new state.
+    const safe =
+      boardEmpty                                    // no tickets up
+      && slowConfirmed                              // and empty for a beat, not a gap between orders
+      && !checklistOpen && !birdOverlayOpen         // not mid checklist sign-off / bird log entry
+      && !recipesOpen && !detailOrder
+      && optimisticallyBumpedRef.current.size === 0 // no bump still in flight
+      && !bumpedToast                               // no live undo window to strand
+      && !holdProgress;                             // not under a cook's finger
+
+    if (!safe) return undefined;
+
+    // Loop guard. If the version endpoint ever became non-deterministic,
+    // an unguarded reload would put every kiosk into a boot loop. Refuse
+    // to reload twice inside two minutes.
+    const GUARD_MS = 2 * 60_000;
+    try {
+      const last = Number(window.sessionStorage.getItem('lc-reload-at') || 0);
+      if (last && Date.now() - last < GUARD_MS) return undefined;
+      window.sessionStorage.setItem('lc-reload-at', String(Date.now()));
+    } catch { /* private mode — proceed without the guard */ }
+
+    // Small delay so this never fires in the same tick as a state change
+    // that might be about to make the board busy again.
+    const t = setTimeout(() => window.location.reload(), 1500);
+    return () => clearTimeout(t);
+  }, [
+    updatePending, boardEmpty, slowConfirmed,
+    checklistOpen, birdOverlayOpen, recipesOpen, detailOrder,
+    bumpedToast, holdProgress,
+  ]);
+
   // Side Batching: aggregate sides across all active orders.
   //
   // Two sources are merged:

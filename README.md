@@ -13,7 +13,7 @@ Real-time kitchen display system for **WILDBIRD**. Replaces mental math and gut 
 | Web app (Vercel) | **Live** in production |
 | Database (Supabase) | **Live** — `lc_*` tables on the WINGMAN project |
 | Toast POS integration | **Live** — receiving order webhooks from 6 stores |
-| Pi kiosks | **Live** — 6 stores, see `DEPLOYMENT.md` |
+| Pi kiosks | **Live** — 6 stores, self-updating when idle; see `DEPLOYMENT.md` |
 | Device auth | **Grace period** — `LC_REQUIRE_DEVICE_AUTH` off until every screen is paired |
 | Real admin login | **Not started** — currently any password is accepted client-side; PUT/DELETE still validate JWT server-side |
 
@@ -32,6 +32,7 @@ Real-time kitchen display system for **WILDBIRD**. Replaces mental math and gut 
 - **Audio alerts**: new-order chime, warning beep on yellow, escalating danger pulse on red
 - **Stale-ticket auto-hide** based on `max_ticket_minutes` (default 60) — keeps the board clean when Toast doesn't send completion events
 - **Persistent device_id** in localStorage — heartbeats every 60s, recovers automatically on disconnect
+- **Self-updating kiosks** — polls the build id and reloads when a new deploy lands, but only while the board is idle (no tickets, no overlay open, no bump in flight). Deploys no longer need an SSH round of F5s
 - **Runs on iPad** — installable PWA (standalone, no browser chrome), responsive down to 1024px landscape, portrait shows a rotate prompt. See `DEPLOYMENT.md`
 - **Per-device pairing** — admin mints a `?dt=` link per screen; bump / unbump / checklists / bird log require it. Revoke or re-issue a single screen from the admin Devices tab without touching the others
 - **Customer name** extracted from delivery-app prefixes (DoorDash, UberEats, Grubhub, Postmates) and walk-in receipts

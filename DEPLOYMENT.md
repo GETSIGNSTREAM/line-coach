@@ -257,6 +257,51 @@ Backgrounding is handled: the display refetches on `visibilitychange`/`focus` an
 
 ---
 
+## How deploys reach the kiosks
+
+**The guarantee: a deploy reaches every kiosk by the next time that kitchen is quiet.** Not instantly.
+
+The Pis launch Chromium once at boot against a fixed URL, and the watchdog only relaunches it if the process *dies*. Nothing about a Vercel deploy makes a running kiosk pick up new code on its own. Before this existed, a screen ran whatever bundle it downloaded at boot — for weeks — and the only remedy was SSHing into six machines to press F5. That is how the LEARN and RECIPES pills went missing in production after they shipped.
+
+Now the display polls `/api/line-coach/version` every 5 minutes and reloads itself when the build id changes — **but only when the board is completely idle**:
+
+- no tickets on the board, and it has been empty for at least 8 seconds (not just a gap between orders)
+- no overlay open — checklist, bird log, recipes, order detail
+- no bump in flight and no live undo window
+- nobody mid hold-to-bump
+
+If any of those is false the reload is **deferred, not cancelled** — it lands the moment the board goes quiet. Every store closes, so the worst case is overnight.
+
+There is deliberately no nightly-reload cron: the idle gate already covers it, and a fixed schedule would make a fix shipped at noon wait until morning even when the kitchen was empty all afternoon.
+
+**Verifying a deploy landed:** Admin → Devices shows each kiosk's last heartbeat, but heartbeats don't tell you the bundle version. The reliable check is to look at the screen. If you need it immediately, use the force-reload one-liner in the ops table.
+
+**If a kiosk never seems to update**, the likely cause is `/api/line-coach/version` being cached somewhere — it ships `Cache-Control: no-store` precisely to prevent that. Confirm with `curl -sI https://wildbird.coach/api/line-coach/version | grep -i cache`.
+
+---
+
+## Feature gates: why a pill might not appear
+
+Fresh code is necessary but not sufficient. Two header pills have gates that are **off by default**, and both are config, not code.
+
+### LEARN pill
+
+Requires `learn_mode_enabled` to be exactly `true` in **that store's** settings. It defaults to `false` and lives in `lc_config` (per store), not brand config.
+
+→ Admin → **Settings** → select the store → tick **Learn Mode**. **Repeat for each store** — six times for the full estate.
+
+### RECIPES pill
+
+Requires at least one menu item or side to have non-empty `build_steps`. This is brand-wide, so it's a single action for the whole estate.
+
+→ Admin → **Menu** → **Sync from Notion** (pulls build steps from the Culinary OS Line Build Guides). Or hand-enter via the CSV import's `build_steps_en` / `build_steps_es` columns.
+
+### Propagation delay
+
+The display polls config every 15 minutes, and the server caches brand config for 60 seconds. **A config change takes up to ~16 minutes to appear on a screen.** That is expected, not a fault. To see it immediately, force-reload that kiosk.
+
+---
+
 ## Per-store store_id list
 
 Hardcoded slugs (also in `lib/line-coach.js TOAST_LOCATION_MAP`):
@@ -368,7 +413,8 @@ Every webhook hits the **lc_webhook_log** table for diagnostics. View in admin �
 | Update menu / sides / tips brand-wide | Admin → Menu / Sides / Tips → edit → Save Changes |
 | Hide stale orders past N min | Admin → Hold Times → `max_ticket_minutes` |
 | Mute audio at one store | Use the monitor's hardware volume buttons |
-| Reload all kiosks remotely | `for h in hollywood westwood ...; do ssh pi@line-coach-$h.local 'DISPLAY=:0 xdotool key F5'; done` |
+| Push a new deploy to the kiosks | Nothing — they self-update once the board is idle (see *How deploys reach the kiosks*) |
+| Force a reload now (can't wait) | `for h in hollywood westwood ...; do ssh pi@line-coach-$h.local 'DISPLAY=:0 xdotool key F5'; done` |
 | Check device health | Admin → Devices |
 | Inspect Toast webhook flow | Admin → Webhooks (filter by status) |
 | See bump times / volume | Admin → Analytics |
